@@ -36,7 +36,17 @@ export type PublicSelectOptions = {
     column: string;
     value: string | number | boolean;
   };
+  /** Only rows whose column is one of these values. An empty list returns no rows. */
+  in?: {
+    column: string;
+    values: (string | number)[];
+  };
 };
+
+// Supabase returns at most 1000 rows per request, so larger reads are paged.
+const PAGE_SIZE = 1000;
+// Long `in` lists are split so the request URL stays a reasonable length.
+const IN_CHUNK = 150;
 
 export async function selectPublicRows<Row extends Record<string, unknown>>(
   table: PublicTable,
@@ -57,37 +67,68 @@ export async function selectPublicRows<Row extends Record<string, unknown>>(
     };
   }
 
+  if (options.in && options.in.values.length === 0) {
+    return { data: [], error: null };
+  }
+
+  const inChunks = options.in
+    ? Array.from(
+        { length: Math.ceil(options.in.values.length / IN_CHUNK) },
+        (_, i) => options.in!.values.slice(i * IN_CHUNK, (i + 1) * IN_CHUNK),
+      )
+    : [null];
+
   try {
-    let query = client.from(table).select(columns);
+    const rows: Row[] = [];
 
-    if (options.equals) {
-      query = query.eq(options.equals.column, options.equals.value);
+    for (const chunk of inChunks) {
+      for (let from = 0; ; from += PAGE_SIZE) {
+        let query = client.from(table).select(columns);
+
+        if (options.equals) {
+          query = query.eq(options.equals.column, options.equals.value);
+        }
+
+        if (options.in && chunk) {
+          query = query.in(options.in.column, chunk);
+        }
+
+        if (options.orderBy) {
+          query = query.order(options.orderBy, {
+            ascending: options.ascending ?? true,
+          });
+        } else if (options.limit === undefined) {
+          // Paging needs a stable order.
+          query = query.order("id", { ascending: true });
+        }
+
+        if (options.limit !== undefined) {
+          query = query.limit(options.limit);
+        } else {
+          query = query.range(from, from + PAGE_SIZE - 1);
+        }
+
+        const { data, error } = await query;
+
+        if (error) {
+          return {
+            data: null,
+            error: {
+              kind: "query",
+              message:
+                "Unable to load public data. Check the selected schema and Supabase read policies.",
+            },
+          };
+        }
+
+        const page = (data ?? []) as unknown as Row[];
+        rows.push(...page);
+
+        if (options.limit !== undefined || page.length < PAGE_SIZE) break;
+      }
     }
 
-    if (options.orderBy) {
-      query = query.order(options.orderBy, {
-        ascending: options.ascending ?? true,
-      });
-    }
-
-    if (options.limit !== undefined) {
-      query = query.limit(options.limit);
-    }
-
-    const { data, error } = await query;
-
-    if (error) {
-      return {
-        data: null,
-        error: {
-          kind: "query",
-          message:
-            "Unable to load public data. Check the selected schema and Supabase read policies.",
-        },
-      };
-    }
-
-    return { data: (data ?? []) as unknown as Row[], error: null };
+    return { data: rows, error: null };
   } catch {
     return {
       data: null,

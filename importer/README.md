@@ -10,7 +10,12 @@ Replaces the n8n race-import and "Calculate Race Points" workflows. For each eve
 
 If anything looks wrong (a class it can't match, tied positions, a DNF ranked ahead of a finisher), it stops for that event and says why. Nothing is marked processed.
 
-Membership CSV uploads are not part of this. They stay in n8n for now.
+## Membership CSV
+```bash
+python3 -m importer.members "LiveLaps - Promoter Reports.csv"           # dry run
+python3 -m importer.members "LiveLaps - Promoter Reports.csv" --apply   # save
+```
+It matches riders on first AND last name and never creates riders. Members who haven't raced yet, riders who share a name, other organizations and expired rows are all listed rather than guessed. It also switches riders whose membership has expired back to non-members. See `members.py`.
 
 ## One-time setup
 1. Run `importer/setup.sql` in the Supabase SQL Editor (step 1, check the output, then step 2).

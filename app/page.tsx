@@ -56,11 +56,10 @@ async function RaceCalendarSection() {
     "events",
     "id, season_id, name, race_date, location, city, state, status",
     {
-      season_id: `eq.${activeSeasonId}`,
+      equals: { column: "season_id", value: activeSeasonId },
+      orderBy: "race_date",
+      ascending: true,
     },
-    {
-      order: "race_date.asc",
-    }
   );
 
   if (result.error || !Array.isArray(result.data)) {
@@ -95,12 +94,11 @@ async function LatestRaces() {
     "events",
     "id, season_id, name, race_date, location, city, state, status",
     {
-      season_id: `eq.${activeSeasonId}`,
-    },
-    {
-      order: "race_date.desc",
+      equals: { column: "season_id", value: activeSeasonId },
+      orderBy: "race_date",
+      ascending: false,
       limit: 5,
-    }
+    },
   );
 
   if (result.error || !Array.isArray(result.data)) {

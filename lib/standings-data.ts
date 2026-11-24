@@ -1,0 +1,140 @@
+import "server-only";
+
+import { selectPublicRows } from "@/lib/supabase/data";
+import { buildStandings, type Standing, type StandingResult } from "@/lib/standings";
+
+export type StandingsClass = {
+  id: string;
+  season_id: string;
+  series_id: string | null;
+  name: string;
+  display_order: number | null;
+  division_id: string | null;
+};
+
+export type StandingsDivision = {
+  id: string;
+  name: string;
+  display_order: number;
+  has_annual_points: boolean;
+};
+
+type Season = { id: string; year: number; name: string | null };
+type Series = { id: string; season_id: string; name: string };
+type EventRow = { id: string };
+type Member = { id: string; full_name: string; rider_number: string | null };
+
+export type SeasonStandings = {
+  season: Season;
+  eventCount: number;
+  memberCount: number;
+  classes: StandingsClass[];
+  divisions: StandingsDivision[];
+  byClass: Record<string, Standing[]>;
+  byDivision: Record<string, Standing[]>;
+};
+
+/**
+ * Loads this season's standings.
+ * "adult": classes that belong to a division, plus division standings.
+ * "junior": classes in the Junior series (no divisions), class standings only.
+ */
+export async function loadSeasonStandings(
+  kind: "adult" | "junior",
+): Promise<{ data: SeasonStandings | null; error: string | null }> {
+  const [seasonsRes, seriesRes, membersRes, classesRes, divisionsRes] =
+    await Promise.all([
+      selectPublicRows<Season>("seasons", "id, year, name", {
+        orderBy: "year",
+        ascending: false,
+      }),
+      selectPublicRows<Series>("series", "id, season_id, name"),
+      selectPublicRows<Member>("member_standings_riders", "id, full_name, rider_number"),
+      selectPublicRows<StandingsClass>(
+        "classes",
+        "id, season_id, series_id, name, display_order, division_id",
+      ),
+      selectPublicRows<StandingsDivision>(
+        "divisions",
+        "id, name, display_order, has_annual_points",
+      ),
+    ]);
+
+  if (
+    seasonsRes.error ||
+    seriesRes.error ||
+    membersRes.error ||
+    classesRes.error ||
+    divisionsRes.error
+  ) {
+    return { data: null, error: "Unable to load standings data. Please try again later." };
+  }
+
+  const seasons = seasonsRes.data ?? [];
+  const season =
+    seasons.find((s) => s.year === new Date().getFullYear()) ?? seasons[0];
+  if (!season) return { data: null, error: "No seasons are available yet." };
+
+  const juniorSeries = new Set(
+    (seriesRes.data ?? [])
+      .filter((s) => s.season_id === season.id && /junior/i.test(s.name))
+      .map((s) => s.id),
+  );
+
+  const classes = (classesRes.data ?? [])
+    .filter((c) => c.season_id === season.id)
+    .filter((c) =>
+      kind === "adult"
+        ? Boolean(c.division_id)
+        : !c.division_id && c.series_id !== null && juniorSeries.has(c.series_id),
+    )
+    .sort(
+      (a, b) =>
+        (a.display_order ?? 999) - (b.display_order ?? 999) ||
+        a.name.localeCompare(b.name),
+    );
+
+  const divisions =
+    kind === "adult"
+      ? (divisionsRes.data ?? [])
+          .filter((d) => d.has_annual_points)
+          .sort((a, b) => a.display_order - b.display_order || a.name.localeCompare(b.name))
+      : [];
+
+  const eventsRes = await selectPublicRows<EventRow>("events", "id", {
+    equals: { column: "season_id", value: season.id },
+  });
+  if (eventsRes.error) return { data: null, error: "Unable to load season events." };
+  const eventIds = (eventsRes.data ?? []).map((e) => e.id);
+
+  const resultsRes = await selectPublicRows<StandingResult>(
+    "results",
+    "event_id, rider_id, class_id, position, points, division_points, dns, dnf, disqualified",
+    { in: { column: "event_id", values: eventIds } },
+  );
+  if (resultsRes.error) return { data: null, error: "Unable to load race results." };
+
+  const classIds = new Set(classes.map((c) => c.id));
+  const results = (resultsRes.data ?? []).filter((r) => classIds.has(r.class_id));
+  const members = membersRes.data ?? [];
+
+  const { byClass, byDivision } = buildStandings({
+    results,
+    members,
+    classes,
+    annualDivisionIds: new Set(divisions.map((d) => d.id)),
+  });
+
+  return {
+    data: {
+      season,
+      eventCount: eventIds.length,
+      memberCount: members.length,
+      classes,
+      divisions,
+      byClass,
+      byDivision,
+    },
+    error: null,
+  };
+}
