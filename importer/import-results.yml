@@ -1,0 +1,35 @@
+name: Import race results
+
+on:
+  schedule:
+    # Mondays at 14:17 UTC (8:17 am Mountain). Change as needed.
+    - cron: "17 14 * * 1"
+  workflow_dispatch:
+    inputs:
+      event:
+        description: "Event id to (re)import (blank = all unprocessed events)"
+        required: false
+      apply:
+        description: "Save changes (unchecked = dry run)"
+        type: boolean
+        default: true
+
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Tests
+        run: python -m unittest discover -s importer/tests -t .
+      - name: Import
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+        run: |
+          ARGS=""
+          if [ "${{ github.event_name }}" = "schedule" ] || [ "${{ inputs.apply }}" = "true" ]; then ARGS="--apply"; fi
+          if [ -n "${{ inputs.event }}" ]; then ARGS="$ARGS --event ${{ inputs.event }}"; fi
+          python -m importer $ARGS

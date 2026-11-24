@@ -1,0 +1,186 @@
+"""Run with:  python3 -m unittest discover -s importer/tests -t .   (from the rmec-racing folder)"""
+
+import json
+import os
+import unittest
+
+from importer import livelaps, pipeline, scoring
+
+SEASON, ADULT, JUNIOR, EVENT = "season-1", "series-adult", "series-junior", "event-1"
+SERIES = [{"id": ADULT, "season_id": SEASON, "name": "Adult"},
+          {"id": JUNIOR, "season_id": SEASON, "name": "Junior"}]
+DIVS = [{"id": f"div-{d}", "series_id": ADULT, "name": d, "has_annual_points": d != "D"} for d in "ABCD"]
+EVENT_ROW = {"id": EVENT, "name": "Test Enduro", "series_id": ADULT, "season_id": SEASON}
+
+
+def cls(cid, name, div=None, series=ADULT):
+    return {"id": cid, "name": name, "series_id": series, "division_id": f"div-{div}" if div else None,
+            "livelaps_class_id": None}
+
+
+def res(rid, class_id, pos, overall, standing="Scored", **flags):
+    return {"id": rid, "event_id": EVENT, "rider_id": f"rider-{rid}", "class_id": class_id,
+            "position": pos, "overall_position": overall, "standing": standing,
+            "dns": flags.get("dns", False), "dnf": flags.get("dnf", False),
+            "disqualified": flags.get("dq", False), "points": None, "division_points": None}
+
+
+class PointsTable(unittest.TestCase):
+    def test_table(self):
+        self.assertEqual([scoring.table_points(p) for p in (1, 2, 3, 4, 5, 6, 20, 21)],
+                         [30, 25, 21, 18, 16, 15, 1, 0])
+        self.assertEqual(scoring.table_points(None), 0)
+
+
+class Scoring(unittest.TestCase):
+    def setUp(self):
+        self.classes = [cls("a-open", "A Open", "A"), cls("a-30", "A 30+", "A"),
+                        cls("d-vet", "60+ Expert", "D"), cls("jr", "16 or Under", series=JUNIOR)]
+
+    def run_calc(self, results):
+        return scoring.calculate(EVENT, results, EVENT_ROW, self.classes, DIVS, SERIES)
+
+    def by_id(self, out):
+        return {p["id"]: p for p in out["proposed"]}
+
+    def test_division_winner_gets_36_and_class_shifts(self):
+        out = self.run_calc([
+            res("w", "a-open", 1, 1), res("x", "a-open", 2, 3), res("y", "a-open", 3, 4),
+            res("p", "a-30", 1, 2), res("q", "a-30", 2, 5),
+        ])
+        self.assertTrue(out["valid"], out["errors"])
+        p = self.by_id(out)
+        self.assertEqual((p["w"]["points"], p["x"]["points"], p["y"]["points"]), (36, 30, 25))
+        # A 30+ has no division winner in it, so normal table.
+        self.assertEqual((p["p"]["points"], p["q"]["points"]), (30, 25))
+        # Division points by overall order inside division A: w, p, x, y, q
+        self.assertEqual([p[k]["division_points"] for k in "wpxyq"], [30, 25, 21, 18, 16])
+
+    def test_dnf_gets_zero_and_cannot_rank_ahead(self):
+        out = self.run_calc([res("a", "a-open", 1, 1), res("b", "a-open", 2, 2),
+                             res("c", "a-open", None, None, standing="DNF", dnf=True)])
+        self.assertTrue(out["valid"], out["errors"])
+        self.assertEqual(self.by_id(out)["c"]["points"], 0)
+
+        bad = self.run_calc([res("a", "a-open", 2, 2), res("c", "a-open", 1, 1, standing="DNF", dnf=True)])
+        self.assertFalse(bad["valid"])
+
+    def test_division_d_and_juniors_get_no_division_points(self):
+        out = self.run_calc([res("d1", "d-vet", 1, 1), res("j1", "jr", 1, None)])
+        self.assertTrue(out["valid"], out["errors"])
+        p = self.by_id(out)
+        self.assertEqual((p["d1"]["points"], p["d1"]["division_points"]), (30, 0))
+        self.assertEqual((p["j1"]["points"], p["j1"]["division_points"]), (30, 0))
+
+    def test_tied_positions_block_the_update(self):
+        out = self.run_calc([res("a", "a-open", 1, 1), res("b", "a-open", 1, 2)])
+        self.assertFalse(out["valid"])
+        self.assertTrue(any("Duplicate class position" in e for e in out["errors"]))
+
+    def test_missing_rider_blocks_the_update(self):
+        r = res("a", "a-open", 1, 1)
+        r["rider_id"] = None
+        self.assertFalse(self.run_calc([r])["valid"])
+
+
+class Importing(unittest.TestCase):
+    def test_api_url(self):
+        self.assertEqual(livelaps.api_url("https://www.livelaps.com/livelaps/scores/82714"),
+                         livelaps.API_PREFIX + "82714")
+        self.assertEqual(livelaps.api_url("82714"), livelaps.API_PREFIX + "82714")
+        with self.assertRaises(ValueError):
+            livelaps.api_url("https://example.com/82714")
+
+    def test_parse_n8n_wrapped_payload(self):
+        inner = {"current_page": 1, "has_more_pages": False, "data": [{"id": 1}, {"id": 2}]}
+        rows, info = livelaps.parse_payload({"data": json.dumps(inner)})
+        self.assertEqual(len(rows), 2)
+        self.assertFalse(info["has_more_pages"])
+
+    def test_rider_rows_dedupes_and_skips_membership(self):
+        rows = pipeline.rider_rows([
+            {"id": 1, "userId": 10, "firstName": "Ann", "lastName": "Lee", "fullName": "Ann Lee", "displayedNumber": "1A", "brand": "KTM"},
+            {"id": 2, "userId": 10, "firstName": "Ann", "lastName": "Lee", "fullName": "Ann Lee", "displayedNumber": "1A", "brand": "KTM"},
+        ])
+        self.assertEqual(len(rows), 1)
+        self.assertNotIn("is_member", rows[0])
+
+    def test_class_matching_alias_and_junior_series(self):
+        classes = [cls("ebike", "E-Bike", "D"), cls("jr", "16 or Under", series=JUNIOR), cls("aopen", "A Open", "A")]
+        match = pipeline.build_class_matcher(classes, EVENT_ROW, SERIES)
+        self.assertEqual(match({"className": "Electric Open"})["id"], "ebike")
+        self.assertEqual(match({"className": " a  open "})["id"], "aopen")
+        self.assertEqual(match({"className": "16 or Under"})["id"], "jr")
+        self.assertIsNone(match({"className": "Mystery Class"}))
+
+    def test_duplicate_class_names_are_not_guessed(self):
+        classes = [cls("sp-c", "Sportsman", "C"), cls("sp-d", "Sportsman", "D")]
+        match = pipeline.build_class_matcher(classes, EVENT_ROW, SERIES)
+        with self.assertRaises(pipeline.EventImportError) as ctx:
+            pipeline.result_rows([{"id": 5, "userId": 9, "className": "Sportsman"}], EVENT, {9: "r9"}, match)
+        self.assertIn("More than one", str(ctx.exception))
+
+    def test_junior_event_scores_without_divisions(self):
+        jr_event = {"id": EVENT, "name": "Jr Enduro", "series_id": JUNIOR, "season_id": SEASON}
+        classes = [cls("jr65", "65cc", series=JUNIOR)]
+        out = scoring.calculate(EVENT, [res("a", "jr65", 1, 1), res("b", "jr65", 2, 2)], jr_event, classes, DIVS, SERIES)
+        self.assertTrue(out["valid"], out["errors"])
+        self.assertEqual([p["points"] for p in out["proposed"]], [30, 25])
+
+    def test_unmatched_class_stops_the_import(self):
+        match = pipeline.build_class_matcher([cls("aopen", "A Open", "A")], EVENT_ROW, SERIES)
+        with self.assertRaises(pipeline.EventImportError) as ctx:
+            pipeline.result_rows([{"id": 5, "userId": 9, "className": "Z Class", "fullName": "Z"}],
+                                 EVENT, {9: "r9"}, match)
+        self.assertIn("Z Class", str(ctx.exception))
+
+    def test_results_follow_rider_by_user_id_not_list_order(self):
+        match = pipeline.build_class_matcher([cls("aopen", "A Open", "A")], EVENT_ROW, SERIES)
+        raw = [{"id": 1, "userId": 111, "className": "A Open"}, {"id": 2, "userId": 222, "className": "A Open"}]
+        rows = pipeline.result_rows(raw, EVENT, {222: "rider-B", 111: "rider-A"}, match)
+        self.assertEqual([r["rider_id"] for r in rows], ["rider-A", "rider-B"])
+        self.assertNotIn("points", rows[0])  # re-import must not wipe points
+
+    def test_status_from_standing(self):
+        self.assertEqual(pipeline.result_status({"standing": "DNF", "isDisqualified": ""}),
+                         {"dns": False, "dnf": True, "disqualified": False})
+        self.assertTrue(pipeline.result_status({"standing": "Scored", "isDisqualified": True})["disqualified"])
+
+
+SAMPLE = os.environ.get("RMEC_SAMPLE_RESULTS")
+
+
+@unittest.skipUnless(SAMPLE and os.path.exists(SAMPLE), "set RMEC_SAMPLE_RESULTS to a saved LiveLaps JSON file")
+class RealHaystackSample(unittest.TestCase):
+    """Runs the real 180-result Haystack sample through matching and scoring with stand-in classes."""
+
+    def test_full_event(self):
+        raw = livelaps.load_results_file(SAMPLE)
+        names = sorted({r["className"] for r in raw})
+        classes = []
+        for i, n in enumerate(names):
+            if n == "16 or Under":
+                classes.append(cls(f"c{i}", n, series=JUNIOR))
+            elif n == "Electric Open":
+                classes.append(cls(f"c{i}", "E-Bike", "D"))
+            elif n.startswith("AA") or n.startswith("A "):
+                classes.append(cls(f"c{i}", n, "A"))
+            elif n.startswith("B "):
+                classes.append(cls(f"c{i}", n, "B"))
+            elif n.startswith("C "):
+                classes.append(cls(f"c{i}", n, "C"))
+            else:
+                classes.append(cls(f"c{i}", n, "D"))
+        riders = {r["livelaps_id"]: f"rider-{r['livelaps_id']}" for r in pipeline.rider_rows(raw)}
+        rows = pipeline.result_rows(raw, EVENT, riders, pipeline.build_class_matcher(classes, EVENT_ROW, SERIES))
+        for i, r in enumerate(rows):
+            r["id"] = f"r{i}"
+        out = scoring.calculate(EVENT, rows, EVENT_ROW, classes, DIVS, SERIES)
+        self.assertTrue(out["valid"], out["errors"][:5])
+        self.assertEqual(len(out["proposed"]), len(raw))
+        self.assertEqual(len(out["winners"]), 3)
+        self.assertEqual(sorted(p["points"] for p in out["proposed"]).count(36), 3)
+
+
+if __name__ == "__main__":
+    unittest.main()
