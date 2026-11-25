@@ -439,6 +439,21 @@ def fill_group_positions(raw: list[dict], rows: list[dict], classes_by_id: dict,
     return used
 
 
+def _seconds(text):
+    """'1:02:03' / '0:49:45.120' / '49:45' -> seconds, or None."""
+    parts = str(text or "").strip().split(":")
+    try:
+        nums = [float(p) for p in parts]
+    except ValueError:
+        return None
+    if not 1 < len(nums) <= 3:
+        return None
+    total = 0.0
+    for n in nums:
+        total = total * 60 + n
+    return total
+
+
 def rerank_merged_classes(raw: list[dict], rows: list[dict], log=print) -> None:
     """When several promoter classes map to one RMEC class (e.g. Concho's two
     16-and-under classes -> "16 or Under"), each arrives with its own 1st, 2nd...
@@ -467,6 +482,13 @@ def rerank_merged_classes(raw: list[dict], rows: list[dict], log=print) -> None:
                 if len(grps) == 1 and None not in grps and all(_int_or_none(r.get("groupPosition")) for r, _ in finished):
                     rank = {id(row): (_int_or_none(r.get("groupPosition")), row["position"] or 999) for r, row in finished}
                     how = f"group position ({grps.pop()})"
+                elif all(_int_or_none(r.get("sectionsCompleted")) is not None and _seconds(r.get("totalCumulatedTime")) is not None
+                         for r, _ in finished):
+                    # No shared ranking at all (e.g. class-only youth pages): hare-scramble order,
+                    # most laps first, then the shorter total time.
+                    rank = {id(row): (-_int_or_none(r.get("sectionsCompleted")), _seconds(r.get("totalCumulatedTime")))
+                            for r, row in finished}
+                    how = "laps, then total time"
         if rank is None:
             why = ("they come from different results links" if len(links) > 1
                    else "they have no overall or group position in common (likely a different course or group)")

@@ -273,3 +273,14 @@ class ClassOnlyLayout(unittest.TestCase):
                           for r in rows],
                          [("Wyatt Maxwell", 1, None, None, "711"), ("Hoyt Kammeyer", 2, None, None, "731"),
                           ("Jace Brinkman", 4, None, None, "249")])
+
+
+class CombineByLapsAndTime(unittest.TestCase):
+    def test_classes_without_any_ranking_use_laps_then_time(self):
+        raw = [{"className": "Girls 4-9", "sectionsCompleted": 4, "totalCumulatedTime": "0:50:10", "_livelaps_race": "m"},
+               {"className": "Womens Beginner", "sectionsCompleted": 5, "totalCumulatedTime": "0:55:00", "_livelaps_race": "m"},
+               {"className": "Girls 4-9", "sectionsCompleted": 5, "totalCumulatedTime": "0:52:30", "_livelaps_race": "m"}]
+        rows = [{"class_id": "lb", "position": p, "overall_position": None, "dns": False, "dnf": False, "disqualified": False}
+                for p in (1, 1, 2)]
+        pipeline.rerank_merged_classes(raw, rows, log=lambda *_: None)
+        self.assertEqual([r["position"] for r in rows], [3, 2, 1])
