@@ -29,7 +29,10 @@ def _pos_int(v) -> bool:
     return isinstance(v, int) and not isinstance(v, bool) and v >= 1
 
 
-def calculate(event_id, results, event, classes, divisions, series):
+def calculate(event_id, results, event, classes, divisions, series, group_ranked_divisions=frozenset()):
+    """group_ranked_divisions: division ids ranked by LiveLaps groupPosition because
+    the race had no overall positions for them. There, class order and group order
+    are two separate LiveLaps rankings, so a disagreement is a warning, not an error."""
     errors: list[str] = []
     warnings: list[str] = []
 
@@ -151,7 +154,14 @@ def calculate(event_id, results, event, classes, divisions, series):
                      key=lambda x: x["r"]["position"])
         for a, b in zip(ann, ann[1:]):
             if b["r"]["overall_position"] < a["r"]["overall_position"]:
-                errors.append(f"Class {cname}: class position order conflicts with overall_position (results {a['r']['id']}, {b['r']['id']}).")
+                if a["div"] and a["div"]["id"] in group_ranked_divisions:
+                    warnings.append(
+                        f"Class {cname}: class and group rankings disagree: result {a['r']['id']} is class "
+                        f"{a['r']['position']} / group {a['r']['overall_position']}, result {b['r']['id']} is class "
+                        f"{b['r']['position']} / group {b['r']['overall_position']}. Class points follow class "
+                        f"position; division points follow group position.")
+                else:
+                    errors.append(f"Class {cname}: class position order conflicts with overall_position (results {a['r']['id']}, {b['r']['id']}).")
 
     # Overall positions must be unique within a division (they rank the division).
     # Different divisions may ride different loops and be ranked separately.

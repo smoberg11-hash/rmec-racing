@@ -327,3 +327,17 @@ class GroupPositions(unittest.TestCase):
         rows = [self.row("b1", None), self.row("b2", None)]
         pipeline.fill_group_positions(raw, rows, self.classes, log=lambda *_: None)
         self.assertEqual([r["overall_position"] for r in rows], [None, None])
+
+
+class GroupRankedConflicts(unittest.TestCase):
+    def test_conflict_is_warning_only_for_group_ranked_divisions(self):
+        classes = [cls("c-open", "C Open", "C"), cls("c-30", "C 30+", "C")]
+        results = [res("w", "c-30", 1, 1), res("x", "c-open", 1, 2), res("y", "c-open", 2, 4), res("z", "c-open", 3, 3)]
+        strict = scoring.calculate(EVENT, results, EVENT_ROW, classes, DIVS, SERIES)
+        self.assertFalse(strict["valid"])
+        relaxed = scoring.calculate(EVENT, results, EVENT_ROW, classes, DIVS, SERIES, {"div-C"})
+        self.assertTrue(relaxed["valid"], relaxed["errors"])
+        self.assertTrue(any("disagree" in w for w in relaxed["warnings"]))
+        p = {r["id"]: r for r in relaxed["proposed"]}
+        self.assertEqual((p["y"]["points"], p["z"]["points"]), (25, 21))       # class order
+        self.assertEqual((p["y"]["division_points"], p["z"]["division_points"]), (18, 21))  # group order
