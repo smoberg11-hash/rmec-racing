@@ -32,6 +32,9 @@ export type SeasonStandings = {
   /** Races this season with results in these classes, oldest first. */
   races: SeasonRace[];
   memberCount: number;
+  /** Riders with results in these classes this season, and how many of them are members. */
+  ridersRaced: number;
+  membersRaced: number;
   classes: StandingsClass[];
   divisions: StandingsDivision[];
   byClass: Record<string, Standing[]>;
@@ -127,6 +130,9 @@ export async function loadSeasonStandings(
     .filter((e) => raced.has(e.id))
     .map((e) => ({ id: e.id, name: e.name, date: e.race_date }));
   const members = membersRes.data ?? [];
+  const memberIds = new Set(members.map((m) => m.id));
+  const racedIds = new Set(results.map((r) => r.rider_id));
+  const membersRaced = [...racedIds].filter((id) => memberIds.has(id)).length;
 
   const { byClass, byDivision } = buildStandings({
     results,
@@ -141,6 +147,8 @@ export async function loadSeasonStandings(
       eventCount: races.length,
       races,
       memberCount: members.length,
+      ridersRaced: racedIds.size,
+      membersRaced,
       classes,
       divisions,
       byClass,

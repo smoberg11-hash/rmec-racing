@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import type { RaceResult, Standing } from "@/lib/standings";
+import { useEffect, useRef, useState } from "react";
+import { rankStandings, type RaceResult, type Standing } from "@/lib/standings";
 import type { SeasonRace } from "@/lib/standings-data";
 import { SelectField } from "@/components/ui";
 
@@ -27,7 +27,22 @@ function shortDate(date: string | null) {
 }
 
 const DIVISION_ALL = "division";
-const ALL_RACES = "all";
+
+/** Re-total and re-rank standings using only the chosen races. */
+function forRaces(standings: Standing[], raceIds: string[], countWins: (r: RaceResult) => boolean): Standing[] {
+  const rows = standings
+    .map((s) => {
+      const picked = raceIds.map((id) => s.races[id]).filter(Boolean) as RaceResult[];
+      return {
+        ...s,
+        points: picked.reduce((sum, r) => sum + r.points, 0),
+        events: picked.length,
+        wins: picked.filter(countWins).length,
+      };
+    })
+    .filter((s) => s.events > 0);
+  return rankStandings(rows);
+}
 
 export default function StandingsBoard({ classes, divisions, races, standingsByClass, standingsByDivision }: Props) {
   const hasDivisions = divisions.length > 0;
@@ -35,20 +50,23 @@ export default function StandingsBoard({ classes, divisions, races, standingsByC
     () => divisions.find((d) => d.name.toLowerCase().startsWith("a"))?.id ?? divisions[0]?.id ?? "",
   );
   const [view, setView] = useState(hasDivisions ? DIVISION_ALL : classes[0]?.id ?? "");
-  const [race, setRace] = useState(ALL_RACES);
+  // null = all races; otherwise the ids that are ticked.
+  const [picked, setPicked] = useState<string[] | null>(null);
 
   const classOptions = hasDivisions ? classes.filter((c) => c.division_id === division) : classes;
   const isDivisionView = hasDivisions && view === DIVISION_ALL;
-  const standings = (isDivisionView ? standingsByDivision[division] : standingsByClass[view]) ?? [];
+  const full = (isDivisionView ? standingsByDivision[division] : standingsByClass[view]) ?? [];
 
-  // Only show race columns somebody in this standing actually rode.
-  const shownRaces = races.filter((r) => standings.some((s) => s.races[r.id]));
-  const selectedRace = shownRaces.find((r) => r.id === race) ?? null;
+  // Races somebody in this standing actually rode, oldest first.
+  const available = races.filter((r) => full.some((s) => s.races[r.id]));
+  const availableIds = available.map((r) => r.id);
+  const selectedIds = picked === null ? availableIds : availableIds.filter((id) => picked.includes(id));
+  const shownRaces = available.filter((r) => selectedIds.includes(r.id));
+  const allSelected = selectedIds.length === availableIds.length;
+  const standings = allSelected ? full : forRaces(full, selectedIds, (r) => r.place === 1 && !r.status);
 
   const divisionName = divisions.find((d) => d.id === division)?.name ?? "Division";
-  const title = isDivisionView
-    ? divisions.find((d) => d.id === division)?.name ?? "Division"
-    : classes.find((c) => c.id === view)?.name ?? "Class";
+  const title = isDivisionView ? divisionName : classes.find((c) => c.id === view)?.name ?? "Class";
 
   function chooseDivision(id: string) {
     setDivision(id);
@@ -95,27 +113,17 @@ export default function StandingsBoard({ classes, divisions, races, standingsByC
           ))}
         </SelectField>
 
-        <SelectField id="standings-race" label="Race" value={selectedRace ? race : ALL_RACES} onChange={(e) => setRace(e.target.value)}>
-          <option value={ALL_RACES}>All races — season total</option>
-          {shownRaces.map((r) => (
-            <option key={r.id} value={r.id}>
-              {shortDate(r.date)} · {r.name}
-            </option>
-          ))}
-        </SelectField>
+        <RacePicker races={available} selected={selectedIds} onChange={setPicked} />
       </div>
 
       <div className="overflow-hidden rounded-2xl border border-white/10 bg-[#141816]">
         <div className="flex flex-wrap items-end justify-between gap-3 border-b border-white/10 px-5 py-4">
           <div>
-            <h2 className="text-xl font-black uppercase tracking-tight">
-              {title}
-              {selectedRace && <span className="text-lime-400"> · {selectedRace.name}</span>}
-            </h2>
+            <h2 className="text-xl font-black uppercase tracking-tight">{title}</h2>
             <p className="mt-1 text-sm text-neutral-400">
-              {selectedRace
-                ? `${shortDate(selectedRace.date)} — ${isDivisionView ? "division" : "class"} points and place at this race.`
-                : `${isDivisionView ? "Division" : "Class"} points from every race. Ties go to the rider with more wins.`}
+              {allSelected
+                ? `${isDivisionView ? "Division" : "Class"} points from every race. Ties go to the rider with more wins.`
+                : `Totals and ranks for the ${shownRaces.length} selected race${shownRaces.length === 1 ? "" : "s"} only.`}
             </p>
           </div>
           <p className="text-xs font-bold uppercase tracking-[0.2em] text-neutral-500">
@@ -123,15 +131,136 @@ export default function StandingsBoard({ classes, divisions, races, standingsByC
           </p>
         </div>
 
-        {standings.length === 0 ? (
+        {full.length === 0 ? (
           <p className="p-8 text-neutral-400">No standings for this selection yet.</p>
-        ) : selectedRace ? (
-          <SingleRaceTable standings={standings} raceId={selectedRace.id} />
+        ) : shownRaces.length === 0 ? (
+          <p className="p-8 text-neutral-400">Pick at least one race above.</p>
         ) : (
           <SeasonTable standings={standings} races={shownRaces} />
         )}
       </div>
     </section>
+  );
+}
+
+/** Multi-select race filter: a button that opens a checklist. */
+function RacePicker({
+  races,
+  selected,
+  onChange,
+}: {
+  races: SeasonRace[];
+  selected: string[];
+  onChange: (ids: string[] | null) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const box = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onMouse = (e: MouseEvent) => {
+      if (!box.current?.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onMouse);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onMouse);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  const all = selected.length === races.length;
+  const summary = all
+    ? `All races (${races.length})`
+    : selected.length === 0
+      ? "No races selected"
+      : selected.length === 1
+        ? races.find((r) => r.id === selected[0])?.name ?? "1 race"
+        : `${selected.length} of ${races.length} races`;
+
+  function toggle(id: string) {
+    const next = selected.includes(id) ? selected.filter((x) => x !== id) : [...selected, id];
+    onChange(next.length === races.length ? null : next);
+  }
+
+  return (
+    <div ref={box} className="relative">
+      <span className="mb-2 block text-[11px] font-bold uppercase tracking-[0.2em] text-neutral-400">Races</span>
+      <button
+        type="button"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+        className={`flex w-full items-center justify-between gap-3 rounded-xl border bg-[#181d1a] py-3 pl-4 pr-3.5 text-left text-sm font-semibold text-white shadow-inner shadow-black/20 transition hover:border-white/25 focus:outline-none focus:ring-2 focus:ring-lime-400/30 ${
+          open ? "border-lime-400" : "border-white/10"
+        }`}
+      >
+        <span className="truncate">{summary}</span>
+        <span className="flex items-center gap-2">
+          {!all && (
+            <span className="rounded-full bg-lime-400 px-2 py-0.5 text-[11px] font-black text-[#101211]">{selected.length}</span>
+          )}
+          <svg
+            aria-hidden="true"
+            viewBox="0 0 20 20"
+            className={`h-4 w-4 text-lime-400 transition ${open ? "rotate-180" : ""}`}
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="M5 8l5 5 5-5" />
+          </svg>
+        </span>
+      </button>
+
+      {open && (
+        <div className="absolute right-0 z-30 mt-2 w-full min-w-[18rem] overflow-hidden rounded-xl border border-white/15 bg-[#181d1a] shadow-2xl shadow-black/60">
+          <div className="flex items-center justify-between border-b border-white/10 px-4 py-2.5 text-xs font-bold uppercase tracking-wider">
+            <button type="button" onClick={() => onChange(null)} className="text-lime-400 hover:text-lime-300">
+              Select all
+            </button>
+            <button type="button" onClick={() => onChange([])} className="text-neutral-400 hover:text-white">
+              Clear
+            </button>
+          </div>
+          <ul role="listbox" aria-multiselectable="true" className="max-h-80 overflow-y-auto py-1">
+            {races.map((r) => {
+              const on = selected.includes(r.id);
+              return (
+                <li key={r.id}>
+                  <button
+                    type="button"
+                    role="option"
+                    aria-selected={on}
+                    onClick={() => toggle(r.id)}
+                    className="flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm transition hover:bg-white/[0.05]"
+                  >
+                    <span
+                      className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md border transition ${
+                        on ? "border-lime-400 bg-lime-400 text-[#101211]" : "border-white/25"
+                      }`}
+                    >
+                      {on && (
+                        <svg viewBox="0 0 20 20" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="3">
+                          <path d="M4.5 10.5l3.5 3.5 7.5-8" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                      )}
+                    </span>
+                    <span className="w-14 shrink-0 font-bold text-lime-400">{shortDate(r.date)}</span>
+                    <span className={`truncate ${on ? "text-white" : "text-neutral-400"}`}>{r.name}</span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -150,15 +279,6 @@ function RankBadge({ rank, tied }: { rank: number | null; tied?: boolean }) {
       {tied ? "T" : ""}
       {rank}
     </span>
-  );
-}
-
-function RiderCell({ s }: { s: Standing }) {
-  return (
-    <div className="min-w-0">
-      <div className="truncate font-bold text-white">{s.riderName}</div>
-      {s.riderNumber && <div className="text-xs text-neutral-500">#{s.riderNumber}</div>}
-    </div>
   );
 }
 
@@ -210,7 +330,10 @@ function SeasonTable({ standings, races }: { standings: Standing[]; races: Seaso
                   <RankBadge rank={s.rank} tied={tied} />
                 </td>
                 <td className={`${stickyRider} px-4 py-3 group-hover:bg-[#1a1f1c]`}>
-                  <RiderCell s={s} />
+                  <div className="min-w-0">
+                    <div className="truncate font-bold text-white">{s.riderName}</div>
+                    {s.riderNumber && <div className="text-xs text-neutral-500">#{s.riderNumber}</div>}
+                  </div>
                 </td>
                 {races.map((r) => (
                   <td key={r.id} className="px-3 py-3 text-center group-hover:bg-white/[0.02]">
@@ -220,52 +343,6 @@ function SeasonTable({ standings, races }: { standings: Standing[]; races: Seaso
                 <td className="px-4 py-3 text-center font-semibold text-neutral-300 group-hover:bg-white/[0.02]">{s.wins}</td>
                 <td className="px-4 py-3 text-right text-lg font-black text-lime-400 group-hover:bg-white/[0.02]">
                   {s.points}
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function SingleRaceTable({ standings, raceId }: { standings: Standing[]; raceId: string }) {
-  const rows = standings
-    .filter((s) => s.races[raceId])
-    .sort((a, b) => {
-      const ra = a.races[raceId], rb = b.races[raceId];
-      return (ra.place ?? 9999) - (rb.place ?? 9999) || rb.points - ra.points || a.riderName.localeCompare(b.riderName);
-    });
-  return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-left text-sm">
-        <thead>
-          <tr className="border-b border-white/10 text-[11px] uppercase tracking-[0.15em] text-neutral-400">
-            <th className="w-20 px-4 py-3">Place</th>
-            <th className="px-4 py-3">Rider</th>
-            <th className="px-4 py-3 text-center text-lime-400">Race points</th>
-            <th className="px-4 py-3 text-right">Season total</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((s) => {
-            const r = s.races[raceId];
-            return (
-              <tr key={s.riderId} className="border-b border-white/5 transition last:border-0 hover:bg-white/[0.02]">
-                <td className="px-4 py-3">
-                  {r.status ? (
-                    <span className="rounded-full bg-red-400/10 px-2.5 py-1 text-xs font-bold text-red-300">{r.status}</span>
-                  ) : (
-                    <RankBadge rank={r.place} />
-                  )}
-                </td>
-                <td className="px-4 py-3">
-                  <RiderCell s={s} />
-                </td>
-                <td className="px-4 py-3 text-center text-lg font-black text-lime-400">{r.points}</td>
-                <td className="px-4 py-3 text-right text-neutral-300">
-                  {s.points} <span className="text-xs text-neutral-500">(#{s.rank})</span>
                 </td>
               </tr>
             );
