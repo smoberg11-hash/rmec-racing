@@ -13,6 +13,9 @@ from . import livelaps, scoring
 # Key: LiveLaps name. Value: Supabase classes.name. Case and spacing don't matter.
 CLASS_ALIASES = {
     "Electric Open": "E-Bike",
+    "Electric Bikes": "E-Bike",
+    "Electric Bike": "E-Bike",
+    "Ebike": "E-Bike",
 }
 
 
