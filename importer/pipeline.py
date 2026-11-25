@@ -226,6 +226,13 @@ class LiveStore:
     def save_results(self, rows):
         return self.db.upsert("results", rows, on_conflict="livelaps_result_id")
 
+    def delete_results(self, ids):
+        deleted = 0
+        for i in range(0, len(ids), 100):
+            chunk = ",".join(ids[i:i + 100])
+            deleted += len(self.db.delete("results", {"id": f"in.({chunk})"}))
+        return deleted
+
     def save_points(self, proposed, existing):
         by_id = {r["id"]: r for r in existing}
         rows = [{
@@ -344,17 +351,26 @@ def import_event(store, event: dict, log=print, results_file: str | None = None)
         log(f"  ! {len(stale)} results already in the database for this event are no longer on LiveLaps "
             f"(they will be left alone; review them).")
 
+    # Rows saved earlier with the wrong rider or class (the old n8n bug). They're
+    # removed and re-saved, because correcting them in place can collide with the
+    # database rule "one result per rider per class per event".
+    by_ll = {_int_or_none(r.get("livelaps_result_id")): r for r in before}
+    wrong = [by_ll[r["livelaps_result_id"]]["id"] for r in rows
+             if r["livelaps_result_id"] in by_ll
+             and (by_ll[r["livelaps_result_id"]].get("rider_id") != r["rider_id"]
+                  or by_ll[r["livelaps_result_id"]].get("class_id") != r["class_id"])]
+
     if store.dry_run:
-        by_ll = {_int_or_none(r.get("livelaps_result_id")): r for r in before}
-        changed_rider = sum(1 for r in rows if r["livelaps_result_id"] in by_ll
-                            and by_ll[r["livelaps_result_id"]].get("rider_id") != r["rider_id"])
-        if changed_rider:
-            log(f"  ! {changed_rider} existing results currently point at a different rider and would be corrected.")
+        if wrong:
+            log(f"  ! {len(wrong)} existing results have the wrong rider or class and would be replaced.")
         saved = [dict(r, id=f"LL-{r['livelaps_result_id']}",
                       points=by_ll.get(r["livelaps_result_id"], {}).get("points"),
                       division_points=by_ll.get(r["livelaps_result_id"], {}).get("division_points"))
                  for r in rows]
     else:
+        if wrong:
+            removed = store.delete_results(wrong)
+            log(f"  Removed {removed} results that had the wrong rider or class; saving corrected ones.")
         store.save_results(rows)
         saved = store.event_results(event_id)
 

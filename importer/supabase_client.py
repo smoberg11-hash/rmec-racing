@@ -76,6 +76,10 @@ class Supabase:
             saved.extend(out or [])
         return saved
 
+    def delete(self, table, filters):
+        out, _ = self._request("DELETE", table, filters, headers={"Prefer": "return=representation"})
+        return out or []
+
     def update(self, table, filters, values):
         out, _ = self._request("PATCH", table, filters, values, headers={"Prefer": "return=representation"})
         return out or []

@@ -147,6 +147,63 @@ class Importing(unittest.TestCase):
         self.assertTrue(pipeline.result_status({"standing": "Scored", "isDisqualified": True})["disqualified"])
 
 
+class FakeStore:
+    """In-memory database that enforces one result per (event, rider, class)."""
+    dry_run = False
+
+    def __init__(self, classes, results):
+        self._classes, self.results, self.processed = classes, results, False
+
+    def classes(self): return self._classes
+    def divisions(self): return DIVS
+    def series(self): return SERIES
+    def riders_by_livelaps_id(self, ids): return {i: f"rider-{i}" for i in ids}
+    def save_riders(self, rows): return {r["livelaps_id"]: f"rider-{r['livelaps_id']}" for r in rows}
+    def event_results(self, event_id): return [dict(r) for r in self.results]
+
+    def delete_results(self, ids):
+        self.results = [r for r in self.results if r["id"] not in ids]
+        return len(ids)
+
+    def save_results(self, rows):
+        for row in rows:
+            existing = next((r for r in self.results if r["livelaps_result_id"] == row["livelaps_result_id"]), None)
+            clash = next((r for r in self.results if r is not existing and
+                          (r["event_id"], r["rider_id"], r["class_id"]) == (row["event_id"], row["rider_id"], row["class_id"])), None)
+            if clash:
+                raise AssertionError("duplicate (event, rider, class)")
+            if existing:
+                existing.update(row)
+            else:
+                self.results.append(dict(row, id=f"new-{row['livelaps_result_id']}", points=None, division_points=None))
+
+    def save_points(self, proposed, existing):
+        for p in proposed:
+            next(r for r in self.results if r["id"] == p["id"])["points"] = p["points"]
+
+    def mark_processed(self, event_id): self.processed = True
+
+
+class FixesOldMixedUpRiders(unittest.TestCase):
+    def test_swapped_riders_are_replaced_without_collisions(self):
+        import tempfile
+        raw = [{"id": 1, "userId": 111, "className": "A Open", "classPosition": 1, "overallPosition": 1, "standing": "Scored"},
+               {"id": 2, "userId": 222, "className": "A Open", "classPosition": 2, "overallPosition": 2, "standing": "Scored"}]
+        # The old n8n import saved these two with their riders swapped.
+        old = [{"id": "o1", "event_id": EVENT, "rider_id": "rider-222", "class_id": "aopen", "livelaps_result_id": 1},
+               {"id": "o2", "event_id": EVENT, "rider_id": "rider-111", "class_id": "aopen", "livelaps_result_id": 2}]
+        store = FakeStore([cls("aopen", "A Open", "A")], old)
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+            json.dump(raw, f)
+        try:
+            pipeline.import_event(store, EVENT_ROW, log=lambda *_: None, results_file=f.name)
+        finally:
+            os.unlink(f.name)
+        got = {r["livelaps_result_id"]: (r["rider_id"], r["points"]) for r in store.results}
+        self.assertEqual(got, {1: ("rider-111", 36), 2: ("rider-222", 30)})
+        self.assertTrue(store.processed)
+
+
 SAMPLE = os.environ.get("RMEC_SAMPLE_RESULTS")
 
 
