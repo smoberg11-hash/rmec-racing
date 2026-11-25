@@ -412,10 +412,12 @@ def fill_group_positions(raw: list[dict], rows: list[dict], classes_by_id: dict,
 
 
 def rerank_merged_classes(raw: list[dict], rows: list[dict], log=print) -> None:
-    """When several promoter classes map to one RMEC class (e.g. Concho's three
+    """When several promoter classes map to one RMEC class (e.g. Concho's two
     16-and-under classes -> "16 or Under"), each arrives with its own 1st, 2nd...
-    Re-rank the combined class by overall finish so it has one set of places.
-    Riders with no overall position (DNS/DNF/DQ) go last."""
+    Re-rank the combined class so it has one set of places, using a ranking the
+    riders share: overall position, or else group position within one group.
+    Both only count when every rider comes from the same results link. Riders
+    with DNS/DNF/DQ go last. If there's no shared ranking, stop."""
     groups: dict = {}
     for r, row in zip(raw, rows):
         groups.setdefault(row["class_id"], []).append((r, row))
@@ -423,24 +425,34 @@ def rerank_merged_classes(raw: list[dict], rows: list[dict], log=print) -> None:
         sources = {normalize(r.get("className")) for r, _ in entries}
         if len(sources) < 2:
             continue
+        names = sorted({str(r.get("className")) for r, _ in entries})
         finished = [(r, row) for r, row in entries
                     if not (row["dns"] or row["dnf"] or row["disqualified"])]
-        unranked = sorted({str(r.get("className")) for r, row in finished if row["overall_position"] is None})
-        if unranked:
-            names = sorted({str(r.get("className")) for r, _ in entries})
+        links = {r.get("_livelaps_race") for r, _ in finished}
+        rank = None
+        if len(links) <= 1:
+            if all(row["overall_position"] is not None for _, row in finished):
+                rank = {id(row): (row["overall_position"], row["position"] or 999) for _, row in finished}
+                how = "overall position"
+            else:
+                grps = {r.get("classGroup") for r, _ in finished}
+                if len(grps) == 1 and None not in grps and all(_int_or_none(r.get("groupPosition")) for r, _ in finished):
+                    rank = {id(row): (_int_or_none(r.get("groupPosition")), row["position"] or 999) for r, row in finished}
+                    how = f"group position ({grps.pop()})"
+        if rank is None:
+            why = ("they come from different results links" if len(links) > 1
+                   else "they have no overall or group position in common (likely a different course or group)")
             raise EventImportError(
-                f"Can't combine {', '.join(names)} into one class: LiveLaps has no shared ranking for "
-                f"{', '.join(unranked)} (they likely rode a different course or group). In importer/class_map.csv, "
-                "map one of them to a different RMEC class or to SKIP.")
-        done = {id(row) for _, row in finished}
-        others = [(r, row) for r, row in entries if id(row) not in done]
-        finished.sort(key=lambda e: (e[1]["overall_position"], e[1]["position"] or 999))
+                f"Can't combine {', '.join(names)} into one class: {why}. "
+                "In importer/class_map.csv, map one of them to a different RMEC class or to SKIP.")
+        finished.sort(key=lambda e: rank[id(e[1])])
         for place, (_, row) in enumerate(finished, start=1):
             row["position"] = place
-        for _, row in others:
-            row["position"] = None
-        names = sorted({str(r.get("className")) for r, _ in entries})
-        log(f"  Combined {', '.join(names)} into one class and re-ranked {len(finished)} finishers by overall position")
+        done = {id(row) for _, row in finished}
+        for _, row in entries:
+            if id(row) not in done:
+                row["position"] = None
+        log(f"  Combined {', '.join(names)} into one class and re-ranked {len(finished)} finishers by {how}")
 
 
 # ---------------------------------------------------------------- data access

@@ -15,6 +15,7 @@ name (see pipeline.rider_key).
 from __future__ import annotations
 
 import html as html_lib
+import os
 import re
 import time
 import urllib.error
@@ -48,9 +49,8 @@ class _PageParser(HTMLParser):
         self._in_select = self._in_option = self._in_title = False
         self._opt_value = ""
         self._opt_text: list[str] = []
-        self._row = None
-        self._cell = None
-        self._cell_tag = ""
+        self._stack: list[dict] = []   # open tables: {"rows": [...], "row": [...]|None, "cell": [...]|None, "tag": str}
+
 
     def handle_starttag(self, tag, attrs):
         a = dict(attrs)
@@ -61,13 +61,15 @@ class _PageParser(HTMLParser):
         elif tag == "title":
             self._in_title = True
         elif tag == "table":
-            self.tables.append([])
-        elif tag == "tr" and self.tables:
-            self._row = []
-        elif tag in ("td", "th") and self._row is not None:
-            self._cell, self._cell_tag = [], tag
-        elif tag == "br" and self._cell is not None:
-            self._cell.append(" ")
+            rows: list = []
+            self.tables.append(rows)
+            self._stack.append({"rows": rows, "row": None, "cell": None, "tag": ""})
+        elif tag == "tr" and self._stack:
+            self._stack[-1]["row"] = []
+        elif tag in ("td", "th") and self._stack and self._stack[-1]["row"] is not None:
+            self._stack[-1]["cell"], self._stack[-1]["tag"] = [], tag
+        elif tag == "br" and self._stack and self._stack[-1]["cell"] is not None:
+            self._stack[-1]["cell"].append(" ")
 
     def handle_endtag(self, tag):
         if tag == "select":
@@ -77,20 +79,25 @@ class _PageParser(HTMLParser):
             self._in_option = False
         elif tag == "title":
             self._in_title = False
-        elif tag in ("td", "th") and self._cell is not None and self._row is not None:
-            self._row.append((self._cell_tag, " ".join("".join(self._cell).replace("\xa0", " ").split())))
-            self._cell = None
-        elif tag == "tr" and self._row is not None and self.tables:
-            self.tables[-1].append(self._row)
-            self._row = None
+        elif tag == "table" and self._stack:
+            self._stack.pop()
+        elif tag in ("td", "th") and self._stack and self._stack[-1]["cell"] is not None:
+            top = self._stack[-1]
+            if top["row"] is not None:
+                top["row"].append((top["tag"], " ".join("".join(top["cell"]).replace("\xa0", " ").split())))
+            top["cell"] = None
+        elif tag == "tr" and self._stack and self._stack[-1]["row"] is not None:
+            top = self._stack[-1]
+            top["rows"].append(top["row"])
+            top["row"] = None
 
     def handle_data(self, data):
         if self._in_option:
             self._opt_text.append(data)
         if self._in_title:
             self.title += data
-        if self._cell is not None:
-            self._cell.append(data)
+        if self._stack and self._stack[-1]["cell"] is not None:
+            self._stack[-1]["cell"].append(data)
 
 
 def parse_page(text: str) -> _PageParser:
@@ -172,7 +179,12 @@ def parse_class_page(text: str, class_name: str, *, source: str, key_prefix: str
 
 
 def _get(url: str, retries: int = 3) -> str:
-    req = urllib.request.Request(url, headers={"User-Agent": "rmec-importer/1.0"})
+    req = urllib.request.Request(url, headers={
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 "
+                      "(KHTML, like Gecko) Version/17.0 Safari/605.1.15 rmec-importer/1.0",
+        "Accept": "text/html,application/xhtml+xml",
+        "Accept-Language": "en-US,en;q=0.9",
+    })
     for attempt in range(retries):
         try:
             with urllib.request.urlopen(req, timeout=60) as resp:
@@ -192,11 +204,24 @@ def fetch_results(link: str) -> list[dict]:
     if not classes:
         raise ValueError(f"No classes found on {base} (results may not be posted yet).")
     results = []
+    empty = []
     for code, name in classes:
         text = _get(f"{base}/{code}/S")
-        results.extend(parse_class_page(text, name, source=source,
-                                        key_prefix=f"mototally/{series}/{year}/{event}/{code}"))
+        rows = parse_class_page(text, name, source=source, key_prefix=f"mototally/{series}/{year}/{event}/{code}")
+        if not rows:
+            empty.append((code, name, text))
+        results.extend(rows)
         time.sleep(0.3)  # be polite to their server
+    if empty:
+        # Save what MotoTally sent for an empty class so the reader can be fixed if the page changed.
+        folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), "debug")
+        os.makedirs(folder, exist_ok=True)
+        code, name, text = empty[0]
+        path = os.path.join(folder, f"mototally_{series}_{year}_{event}_{code}.html")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(text)
+        print(f"  note: {len(empty)} MotoTally classes had no readable results "
+              f"({', '.join(n for _, n, _ in empty[:5])}{'…' if len(empty) > 5 else ''}); saved {path}")
     return results
 
 

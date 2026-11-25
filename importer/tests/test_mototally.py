@@ -135,3 +135,30 @@ class ImportFromMotoTally(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NestedLayout(unittest.TestCase):
+    def test_results_table_inside_layout_table(self):
+        body = page("mototally_2026_4_C2.html").split("<body>")[1].split("</body>")[0]
+        nested = "<html><body><table><tr><td>menu</td><td>" + body + "</td></tr><tr><td>footer</td></tr></table></body></html>"
+        rows = mototally.parse_class_page(nested, "A Open", source="x", key_prefix="k")
+        self.assertEqual(len(rows), 13)
+
+
+class CombiningJuniorClasses(unittest.TestCase):
+    def row(self, pos):
+        return {"class_id": "lb", "position": pos, "overall_position": None, "dns": False, "dnf": False, "disqualified": False}
+
+    def test_same_group_uses_group_position(self):
+        raw = [{"className": "Women Beg", "classGroup": "Overall Women Beg", "groupPosition": 2, "_livelaps_race": "m"},
+               {"className": "Women Vet Beginner", "classGroup": "Overall Women Beg", "groupPosition": 1, "_livelaps_race": "m"}]
+        rows = [self.row(1), self.row(1)]
+        pipeline.rerank_merged_classes(raw, rows, log=lambda *_: None)
+        self.assertEqual([r["position"] for r in rows], [2, 1])
+
+    def test_different_links_stop(self):
+        raw = [{"className": "65cc (7-9)", "_livelaps_race": "a"}, {"className": "65cc (10-11)", "_livelaps_race": "b"}]
+        rows = [dict(self.row(1), overall_position=1), dict(self.row(1), overall_position=1)]
+        with self.assertRaises(pipeline.EventImportError) as ctx:
+            pipeline.rerank_merged_classes(raw, rows, log=lambda *_: None)
+        self.assertIn("different results links", str(ctx.exception))
