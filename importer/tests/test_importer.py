@@ -303,3 +303,27 @@ class MergedClasses(unittest.TestCase):
                 {"class_id": "u16", "position": 2, "overall_position": None, "dns": False, "dnf": True, "disqualified": False}]
         pipeline.rerank_merged_classes(raw, rows, log=lambda *_: None)
         self.assertEqual([r["position"] for r in rows], [1, 3, 2, None])
+
+
+class GroupPositions(unittest.TestCase):
+    def setUp(self):
+        self.classes = {"a": {"id": "a", "division_id": "div-A"}, "b1": {"id": "b1", "division_id": "div-B"},
+                        "b2": {"id": "b2", "division_id": "div-B"}}
+
+    def row(self, cid, overall, dnf=False):
+        return {"class_id": cid, "overall_position": overall, "dns": False, "dnf": dnf, "disqualified": False}
+
+    def test_division_without_overall_uses_group_position(self):
+        raw = [{"className": "A Open", "classGroup": "A", "groupPosition": 1},
+               {"className": "B 40+", "classGroup": "B", "groupPosition": 2},
+               {"className": "B Open", "classGroup": "B", "groupPosition": 1}]
+        rows = [self.row("a", 1), self.row("b1", None), self.row("b2", None)]
+        pipeline.fill_group_positions(raw, rows, self.classes, log=lambda *_: None)
+        self.assertEqual([r["overall_position"] for r in rows], [1, 2, 1])
+
+    def test_mixed_groups_are_left_for_a_person(self):
+        raw = [{"className": "B 40+", "classGroup": "B", "groupPosition": 2},
+               {"className": "B Open", "classGroup": "C", "groupPosition": 1}]
+        rows = [self.row("b1", None), self.row("b2", None)]
+        pipeline.fill_group_positions(raw, rows, self.classes, log=lambda *_: None)
+        self.assertEqual([r["overall_position"] for r in rows], [None, None])

@@ -278,6 +278,33 @@ def result_rows(results, event_id, rider_ids: dict, class_for) -> list[dict]:
     return rows
 
 
+def fill_group_positions(raw: list[dict], rows: list[dict], classes_by_id: dict, log=print) -> None:
+    """Some races only give an overall position to one group (e.g. A riders at
+    Outlaw); B/C riders on a separate loop only get a groupPosition (their rank
+    within their LiveLaps group). Division points only compare riders inside one
+    division, so for a division where overall positions are missing we use
+    groupPosition instead, but only if everyone in that division is in the same
+    LiveLaps group, so the numbers are comparable. Otherwise nothing changes and
+    scoring stops with an error for a person to look at."""
+    by_div: dict = {}
+    for r, row in zip(raw, rows):
+        div = (classes_by_id.get(row["class_id"]) or {}).get("division_id")
+        if div:
+            by_div.setdefault(div, []).append((r, row))
+    for entries in by_div.values():
+        eligible = [(r, row) for r, row in entries if not (row["dns"] or row["dnf"] or row["disqualified"])]
+        if all(row["overall_position"] is not None for _, row in eligible):
+            continue
+        groups = {str(r.get("classGroup")) for r, _ in entries if r.get("classGroup") not in (None, "")}
+        if len(groups) > 1 or not all(_int_or_none(r.get("groupPosition")) for r, _ in eligible):
+            continue
+        for r, row in entries:
+            row["overall_position"] = _int_or_none(r.get("groupPosition"))
+        classes = sorted({str(r.get("className")) for r, _ in entries})
+        log(f"  No overall positions from LiveLaps for {', '.join(classes)}; "
+            f"ranking that division by group position{' (group ' + groups.pop() + ')' if groups else ''}")
+
+
 def rerank_merged_classes(raw: list[dict], rows: list[dict], log=print) -> None:
     """When several promoter classes map to one RMEC class (e.g. Concho's three
     16-and-under classes -> "16 or Under"), each arrives with its own 1st, 2nd...
@@ -477,6 +504,7 @@ def import_event(store, event: dict, log=print, results_file: str | None = None)
     # 3. Results, matched by LiveLaps userId and class — never by list position.
     class_for = build_class_matcher(classes, event, series)
     rows = result_rows(raw, event_id, rider_ids, class_for)
+    fill_group_positions(raw, rows, {c['id']: c for c in classes}, log)
     rerank_merged_classes(raw, rows, log)
     before = store.event_results(event_id)
     known = {_int_or_none(r.get("livelaps_result_id")) for r in before}

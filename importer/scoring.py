@@ -153,16 +153,19 @@ def calculate(event_id, results, event, classes, divisions, series):
             if b["r"]["overall_position"] < a["r"]["overall_position"]:
                 errors.append(f"Class {cname}: class position order conflicts with overall_position (results {a['r']['id']}, {b['r']['id']}).")
 
+    # Overall positions must be unique within a division (they rank the division).
+    # Different divisions may ride different loops and be ranked separately.
     seen_overall = {}
     for x in recs:
         op = x["r"].get("overall_position")
         if x["eligible"] and x["annual"] and not _pos_int(op):
             errors.append(f"Missing/invalid overall_position for eligible Adult result {x['r']['id']} (needed for division ranking).")
-        if _pos_int(op):
-            if op in seen_overall:
-                errors.append(f"Duplicate overall_position {op} (results {seen_overall[op]}, {x['r']['id']}).")
+        if _pos_int(op) and x["div"]:
+            key = (x["div"]["id"], op)
+            if key in seen_overall:
+                errors.append(f"Duplicate overall_position {op} in {x['div']['name']} (results {seen_overall[key]}, {x['r']['id']}).")
             else:
-                seen_overall[op] = x["r"]["id"]
+                seen_overall[key] = x["r"]["id"]
 
     # ---------- Step 1: division order and winners (annual divisions only) ----------
     by_div: dict = {}
