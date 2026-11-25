@@ -291,3 +291,15 @@ class ClassMapSheet(unittest.TestCase):
         self.assertEqual(pipeline.suggest_class("Over 60+ C", names), "C 60+")
         self.assertEqual(pipeline.suggest_class("C <251", names), "C 250")
         self.assertEqual(pipeline.suggest_class("Vintage", names), "")
+
+
+class MergedClasses(unittest.TestCase):
+    def test_rerank_by_overall(self):
+        raw = [{"className": "16 - Under Large Wheel"}, {"className": "16 - Under Large Wheel"},
+               {"className": "Super Short -16"}, {"className": "Super Short -16"}]
+        rows = [{"class_id": "u16", "position": 1, "overall_position": 10, "dns": False, "dnf": False, "disqualified": False},
+                {"class_id": "u16", "position": 2, "overall_position": 30, "dns": False, "dnf": False, "disqualified": False},
+                {"class_id": "u16", "position": 1, "overall_position": 20, "dns": False, "dnf": False, "disqualified": False},
+                {"class_id": "u16", "position": 2, "overall_position": None, "dns": False, "dnf": True, "disqualified": False}]
+        pipeline.rerank_merged_classes(raw, rows, log=lambda *_: None)
+        self.assertEqual([r["position"] for r in rows], [1, 3, 2, None])

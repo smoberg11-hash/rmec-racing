@@ -23,7 +23,7 @@ CLASS_ALIASES = {
 # rmec_class = an RMEC class name from Supabase, or SKIP for classes that don't
 # count for RMEC points. Fill it with:  python3 -m importer --find-classes
 CLASS_MAP_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "class_map.csv")
-CLASS_MAP_COLUMNS = ["livelaps_class", "rmec_class", "suggested", "riders", "first_seen_at"]
+CLASS_MAP_COLUMNS = ["livelaps_class", "rmec_class", "note", "suggested", "riders", "first_seen_at"]
 SKIP = "skip"
 
 
@@ -278,6 +278,32 @@ def result_rows(results, event_id, rider_ids: dict, class_for) -> list[dict]:
     return rows
 
 
+def rerank_merged_classes(raw: list[dict], rows: list[dict], log=print) -> None:
+    """When several promoter classes map to one RMEC class (e.g. Concho's three
+    16-and-under classes -> "16 or Under"), each arrives with its own 1st, 2nd...
+    Re-rank the combined class by overall finish so it has one set of places.
+    Riders with no overall position (DNS/DNF/DQ) go last."""
+    groups: dict = {}
+    for r, row in zip(raw, rows):
+        groups.setdefault(row["class_id"], []).append((r, row))
+    for entries in groups.values():
+        sources = {normalize(r.get("className")) for r, _ in entries}
+        if len(sources) < 2:
+            continue
+        finished = [(r, row) for r, row in entries
+                    if row["overall_position"] is not None
+                    and not (row["dns"] or row["dnf"] or row["disqualified"])]
+        done = {id(row) for _, row in finished}
+        others = [(r, row) for r, row in entries if id(row) not in done]
+        finished.sort(key=lambda e: (e[1]["overall_position"], e[1]["position"] or 999))
+        for place, (_, row) in enumerate(finished, start=1):
+            row["position"] = place
+        for _, row in others:
+            row["position"] = None
+        names = sorted({str(r.get("className")) for r, _ in entries})
+        log(f"  Combined {', '.join(names)} into one class and re-ranked {len(finished)} finishers by overall position")
+
+
 # ---------------------------------------------------------------- data access
 
 class LiveStore:
@@ -451,6 +477,7 @@ def import_event(store, event: dict, log=print, results_file: str | None = None)
     # 3. Results, matched by LiveLaps userId and class — never by list position.
     class_for = build_class_matcher(classes, event, series)
     rows = result_rows(raw, event_id, rider_ids, class_for)
+    rerank_merged_classes(raw, rows, log)
     before = store.event_results(event_id)
     known = {_int_or_none(r.get("livelaps_result_id")) for r in before}
     incoming = {r["livelaps_result_id"] for r in rows}
