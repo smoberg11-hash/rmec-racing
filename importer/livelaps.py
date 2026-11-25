@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 import urllib.error
 import urllib.request
@@ -11,18 +12,32 @@ PAGE_PREFIX = "https://www.livelaps.com/livelaps/scores/"
 API_PREFIX = "https://www.livelaps.com/laravel/public/api/v1/livelaps/race/results/"
 
 
-def api_url(results_url: str) -> str:
-    """Turn a LiveLaps results page URL (or a bare race ID) into the JSON API URL."""
-    url = str(results_url).strip().rstrip("/")
+def race_id(results_url) -> str:
+    """Pull the LiveLaps race number out of any of the link formats LiveLaps has used:
+
+      https://www.livelaps.com/livelaps/scores/83628             (old results page)
+      https://www.livelaps.com/events/25656/races/87818          (current site)
+      https://www.livelaps.com/laravel/public/api/v1/livelaps/race/results/83628
+      83628
+    """
+    url = str(results_url or "").strip()
     if url.isdigit():
-        return API_PREFIX + url
-    if url.startswith(API_PREFIX):
         return url
-    if url.startswith(PAGE_PREFIX):
-        race_id = url[len(PAGE_PREFIX):].split("/")[0].split("?")[0]
-        if race_id.isdigit():
-            return API_PREFIX + race_id
-    raise ValueError(f"Not a LiveLaps results URL: {results_url!r}")
+    if "livelaps.com" in url.lower():
+        path = url.split("?")[0].split("#")[0].rstrip("/")
+        for pattern in (r"/races?/(\d+)", r"/scores/(\d+)", r"/race/results/(\d+)"):
+            m = re.search(pattern, path)
+            if m:
+                return m.group(1)
+    raise ValueError(
+        f"Not a LiveLaps results URL: {results_url!r}. Use the race page link, "
+        "e.g. https://www.livelaps.com/events/25656/races/87818"
+    )
+
+
+def api_url(results_url: str) -> str:
+    """Turn a LiveLaps results link (or a bare race number) into the JSON API URL."""
+    return API_PREFIX + race_id(results_url)
 
 
 def parse_payload(payload) -> tuple[list[dict], dict]:

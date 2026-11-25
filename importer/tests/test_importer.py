@@ -88,6 +88,11 @@ class Importing(unittest.TestCase):
         self.assertEqual(livelaps.api_url("https://www.livelaps.com/livelaps/scores/82714"),
                          livelaps.API_PREFIX + "82714")
         self.assertEqual(livelaps.api_url("82714"), livelaps.API_PREFIX + "82714")
+        self.assertEqual(livelaps.api_url("https://www.livelaps.com/events/25656/races/87818"),
+                         livelaps.API_PREFIX + "87818")
+        self.assertEqual(livelaps.api_url("https://www.livelaps.com/events/25656/races/87818/?tab=results"),
+                         livelaps.API_PREFIX + "87818")
+        self.assertEqual(livelaps.api_url(livelaps.API_PREFIX + "83628"), livelaps.API_PREFIX + "83628")
         with self.assertRaises(ValueError):
             livelaps.api_url("https://example.com/82714")
 
