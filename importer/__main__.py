@@ -100,6 +100,9 @@ def main(argv=None):
     ap.add_argument("--offline", metavar="FOLDER", help="use CSV exports in FOLDER instead of Supabase (dry run only)")
     ap.add_argument("--results-file", help="read LiveLaps results from a saved JSON file instead of the API")
     ap.add_argument("--report", metavar="FOLDER", help="write a points CSV per event into FOLDER")
+    ap.add_argument("--replace", action="store_true",
+                    help="with --event: also remove results saved earlier for that event that are no longer in its "
+                         "results (use after changing an event's link)")
     ap.add_argument("--find-classes", action="store_true",
                     help="list LiveLaps class names that need an RMEC class in importer/class_map.csv")
     args = ap.parse_args(argv)
@@ -142,13 +145,15 @@ def main(argv=None):
     if args.results_file and len(events) != 1:
         ap.error("--results-file needs --event (it holds one race).")
 
+    if args.replace and not args.event:
+        ap.error("--replace only works together with --event <id>, so it can't remove results from other races by accident.")
     if args.find_classes:
         return find_classes(store, events)
 
     failures = 0
     for ev in events:
         try:
-            out = pipeline.import_event(store, ev, results_file=args.results_file)
+            out = pipeline.import_event(store, ev, results_file=args.results_file, replace=args.replace)
             if args.report:
                 os.makedirs(args.report, exist_ok=True)
                 path = os.path.join(args.report, f"points-{ev['id'][:8]}.csv")

@@ -374,3 +374,21 @@ class MultipleLinks(unittest.TestCase):
         rows = [{"class_id": "b1"}, {"class_id": "b2"}]
         with self.assertRaises(pipeline.EventImportError):
             pipeline.check_divisions_single_race(raw, rows, classes)
+
+
+class ReplaceAfterLinkChange(unittest.TestCase):
+    def test_replace_removes_results_from_the_old_link(self):
+        import tempfile
+        raw = [{"id": 1, "userId": 111, "className": "A Open", "classPosition": 1, "overallPosition": 1, "standing": "Scored"}]
+        old = [{"id": "old", "event_id": EVENT, "rider_id": "rider-999", "class_id": "aopen", "livelaps_result_id": 77}]
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+            json.dump(raw, f)
+        try:
+            keep = FakeStore([cls("aopen", "A Open", "A")], [dict(o) for o in old])
+            pipeline.import_event(keep, EVENT_ROW, log=lambda *_: None, results_file=f.name)
+            self.assertIn(77, [r["livelaps_result_id"] for r in keep.results])
+            gone = FakeStore([cls("aopen", "A Open", "A")], [dict(o) for o in old])
+            pipeline.import_event(gone, EVENT_ROW, log=lambda *_: None, results_file=f.name, replace=True)
+            self.assertEqual([r["livelaps_result_id"] for r in gone.results], [1])
+        finally:
+            os.unlink(f.name)

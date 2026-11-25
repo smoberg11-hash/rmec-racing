@@ -623,7 +623,7 @@ class CsvStore:
 
 # ---------------------------------------------------------------- orchestration
 
-def import_event(store, event: dict, log=print, results_file: str | None = None) -> dict:
+def import_event(store, event: dict, log=print, results_file: str | None = None, replace: bool = False) -> dict:
     """Import and score one event. Returns a summary dict. Raises EventImportError on failure."""
     event_id = event["id"]
     log(f"\n=== {event.get('name')} ({event.get('race_date')}) — {event_id}")
@@ -679,9 +679,12 @@ def import_event(store, event: dict, log=print, results_file: str | None = None)
     stale = [r for r in before if result_key(r) not in incoming]
     log(f"Results: {len(rows)} to save — {len(incoming & set(by_key))} update existing rows, "
         f"{len(incoming - set(by_key))} new")
-    if stale:
+    if stale and replace:
+        log(f"  {len(stale)} results saved earlier for this event aren't in the current results "
+            f"(e.g. the link changed); --replace {'would remove' if store.dry_run else 'removes'} them.")
+    elif stale:
         log(f"  ! {len(stale)} results already in the database for this event are no longer in the results "
-            f"(they will be left alone; review them).")
+            f"(left alone). If the link changed, re-run with --event {event_id} --replace to remove them.")
 
     # Rows saved earlier with the wrong rider or class (the old n8n bug). They're
     # removed and re-saved, because correcting them in place can collide with the
@@ -702,6 +705,9 @@ def import_event(store, event: dict, log=print, results_file: str | None = None)
         if wrong:
             removed = store.delete_results(wrong)
             log(f"  Removed {removed} results that had the wrong rider or class; saving corrected ones.")
+        if stale and replace:
+            removed = store.delete_results([r["id"] for r in stale])
+            log(f"  Removed {removed} old results that are no longer in this event's results.")
         store.save_results(rows)
         saved = store.event_results(event_id)
 
