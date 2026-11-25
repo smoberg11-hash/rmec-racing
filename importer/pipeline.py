@@ -278,6 +278,23 @@ def result_rows(results, event_id, rider_ids: dict, class_for) -> list[dict]:
     return rows
 
 
+def check_divisions_single_race(raw: list[dict], rows: list[dict], classes_by_id: dict) -> None:
+    """With several LiveLaps links per event, class places are fine (each class is
+    in one link), but overall/group positions from different links can't be compared.
+    A division (which is ranked across classes) must therefore come from one link."""
+    by_div: dict = {}
+    for r, row in zip(raw, rows):
+        cls = classes_by_id.get(row["class_id"]) or {}
+        if cls.get("division_id") and r.get("_livelaps_race"):
+            by_div.setdefault(cls["division_id"], {}).setdefault(r["_livelaps_race"], set()).add(str(r.get("className")))
+    for races in by_div.values():
+        if len(races) > 1:
+            detail = "; ".join(f"race {rid}: {', '.join(sorted(names))}" for rid, names in races.items())
+            raise EventImportError(
+                "One division's classes are spread over several LiveLaps links, so riders can't be ranked "
+                f"across them for division points ({detail}).")
+
+
 def fill_group_positions(raw: list[dict], rows: list[dict], classes_by_id: dict, log=print) -> set:
     """Some races only give an overall position to one group (e.g. A riders at
     Outlaw); B/C riders on a separate loop only get a groupPosition (their rank
@@ -321,8 +338,14 @@ def rerank_merged_classes(raw: list[dict], rows: list[dict], log=print) -> None:
         if len(sources) < 2:
             continue
         finished = [(r, row) for r, row in entries
-                    if row["overall_position"] is not None
-                    and not (row["dns"] or row["dnf"] or row["disqualified"])]
+                    if not (row["dns"] or row["dnf"] or row["disqualified"])]
+        unranked = sorted({str(r.get("className")) for r, row in finished if row["overall_position"] is None})
+        if unranked:
+            names = sorted({str(r.get("className")) for r, _ in entries})
+            raise EventImportError(
+                f"Can't combine {', '.join(names)} into one class: LiveLaps has no shared ranking for "
+                f"{', '.join(unranked)} (they likely rode a different course or group). In importer/class_map.csv, "
+                "map one of them to a different RMEC class or to SKIP.")
         done = {id(row) for _, row in finished}
         others = [(r, row) for r, row in entries if id(row) not in done]
         finished.sort(key=lambda e: (e[1]["overall_position"], e[1]["position"] or 999))
@@ -478,7 +501,12 @@ def import_event(store, event: dict, log=print, results_file: str | None = None)
         if not event.get("results_url"):
             raise EventImportError("Event has no results_url.")
         raw = livelaps.fetch_results(event["results_url"])
-        log(f"Fetched {len(raw)} LiveLaps results from {livelaps.api_url(event['results_url'])}")
+        races = livelaps.race_ids(event["results_url"])
+        if len(races) == 1:
+            log(f"Fetched {len(raw)} LiveLaps results from {livelaps.api_url(races[0])}")
+        else:
+            counts = ", ".join(f"race {rid}: {sum(r.get('_livelaps_race') == rid for r in raw)}" for rid in races)
+            log(f"Fetched {len(raw)} LiveLaps results from {len(races)} LiveLaps links ({counts})")
     if not raw:
         raise EventImportError("LiveLaps returned no results (results may not be posted yet).")
     raw = drop_ignored_and_empty_duplicates(raw, log)
@@ -507,6 +535,7 @@ def import_event(store, event: dict, log=print, results_file: str | None = None)
     # 3. Results, matched by LiveLaps userId and class — never by list position.
     class_for = build_class_matcher(classes, event, series)
     rows = result_rows(raw, event_id, rider_ids, class_for)
+    check_divisions_single_race(raw, rows, {c['id']: c for c in classes})
     group_ranked = fill_group_positions(raw, rows, {c['id']: c for c in classes}, log)
     rerank_merged_classes(raw, rows, log)
     before = store.event_results(event_id)

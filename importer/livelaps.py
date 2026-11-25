@@ -90,8 +90,34 @@ def _get_json(url: str, retries: int = 3):
             time.sleep(2 ** attempt * 2)
 
 
+def split_links(results_url) -> list[str]:
+    """One event can have several LiveLaps links (e.g. a Junior race split by class).
+    They go in the same results_url cell, separated by spaces, commas, semicolons or new lines."""
+    return [part for part in re.split(r"[\s,;]+", str(results_url or "").strip()) if part]
+
+
+def race_ids(results_url) -> list[str]:
+    ids = [race_id(link) for link in split_links(results_url)]
+    if not ids:
+        raise ValueError("Event has no LiveLaps link.")
+    if len(ids) != len(set(ids)):
+        raise ValueError(f"The same LiveLaps race is listed twice in results_url: {results_url!r}")
+    return ids
+
+
 def fetch_results(results_url: str) -> list[dict]:
-    """Download every result for a race, following pagination if there is any."""
+    """Download every result for an event: all of its LiveLaps links, all pages.
+    Each result is tagged with the LiveLaps race it came from in "_livelaps_race"."""
+    results: list[dict] = []
+    for rid in race_ids(results_url):
+        for r in _fetch_one(rid):
+            r["_livelaps_race"] = rid
+            results.append(r)
+    return results
+
+
+def _fetch_one(results_url: str) -> list[dict]:
+    """Download every result for one LiveLaps race, following pagination if there is any."""
     base = api_url(results_url)
     results: list[dict] = []
     page = 1

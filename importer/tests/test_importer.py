@@ -341,3 +341,36 @@ class GroupRankedConflicts(unittest.TestCase):
         p = {r["id"]: r for r in relaxed["proposed"]}
         self.assertEqual((p["y"]["points"], p["z"]["points"]), (25, 21))       # class order
         self.assertEqual((p["y"]["division_points"], p["z"]["division_points"]), (18, 21))  # group order
+
+
+class CantCombine(unittest.TestCase):
+    def test_merge_without_shared_ranking_stops(self):
+        raw = [{"className": "A 40+"}, {"className": "Master 40"}]
+        rows = [{"class_id": "a40", "position": 1, "overall_position": 5, "dns": False, "dnf": False, "disqualified": False},
+                {"class_id": "a40", "position": 1, "overall_position": None, "dns": False, "dnf": False, "disqualified": False}]
+        with self.assertRaises(pipeline.EventImportError) as ctx:
+            pipeline.rerank_merged_classes(raw, rows, log=lambda *_: None)
+        self.assertIn("Master 40", str(ctx.exception))
+
+
+class MultipleLinks(unittest.TestCase):
+    def test_split_links(self):
+        cell = ("https://www.livelaps.com/events/1/races/111, https://www.livelaps.com/events/1/races/222\n"
+                "https://www.livelaps.com/livelaps/scores/333")
+        self.assertEqual(livelaps.race_ids(cell), ["111", "222", "333"])
+        self.assertEqual(livelaps.race_ids("https://www.livelaps.com/events/1/races/111"), ["111"])
+        with self.assertRaises(ValueError):
+            livelaps.race_ids("https://www.livelaps.com/events/1/races/111 https://www.livelaps.com/events/1/races/111")
+
+    def test_junior_classes_from_two_links_are_fine(self):
+        classes = {"j50": {"id": "j50", "division_id": None}, "j65": {"id": "j65", "division_id": None}}
+        raw = [{"_livelaps_race": "1", "className": "50cc"}, {"_livelaps_race": "2", "className": "65cc"}]
+        rows = [{"class_id": "j50"}, {"class_id": "j65"}]
+        pipeline.check_divisions_single_race(raw, rows, classes)  # no error
+
+    def test_division_split_across_links_stops(self):
+        classes = {"b1": {"id": "b1", "division_id": "div-B"}, "b2": {"id": "b2", "division_id": "div-B"}}
+        raw = [{"_livelaps_race": "1", "className": "B 30+"}, {"_livelaps_race": "2", "className": "B Open"}]
+        rows = [{"class_id": "b1"}, {"class_id": "b2"}]
+        with self.assertRaises(pipeline.EventImportError):
+            pipeline.check_divisions_single_race(raw, rows, classes)

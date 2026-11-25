@@ -38,5 +38,8 @@ python3 -m importer --find-classes
 ```
 It adds every unmatched name to `importer/class_map.csv` with a suggestion. Open it (Numbers/Excel are fine, save as CSV) and fill in `rmec_class` with the RMEC class name, or `SKIP` for classes that don't count for RMEC points. Then run the import again.
 
+## One race, several LiveLaps links
+Some races (often Junior) split classes across several LiveLaps links. Put all of them in that event's `results_url` cell, separated by spaces, commas or new lines. The importer fetches each one and imports them as one race. A division's classes must all be in the same link, because places from different links can't be compared; if they're split, the importer stops and says so.
+
 ## Scheduling
 `importer/import-results.yml` runs it weekly on GitHub Actions. Move it to `.github/workflows/import-results.yml` once the repo is on GitHub. Add two repository secrets, `SUPABASE_URL` and `SUPABASE_SECRET_KEY`. You can also run it by hand from the Actions tab and choose an event or a dry run.
