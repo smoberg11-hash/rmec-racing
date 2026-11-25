@@ -54,7 +54,7 @@ def find_classes(store, events):
     found = {}  # normalized name -> [display name, riders, first event]
     for ev in events:
         try:
-            raw, _ = sources.fetch_results(ev["results_url"])
+            raw, _ = sources.fetch_results(ev["results_url"], ev.get("race_date"))
         except Exception as e:  # keep going; report at the end
             print(f"  {ev.get('name')}: couldn't fetch results ({e})")
             continue

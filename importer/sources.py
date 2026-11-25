@@ -6,6 +6,9 @@ from . import livelaps, mototally
 
 
 def describe(link: str) -> str:
+    if mototally.is_index_link(link):
+        series = mototally.INDEX_RE.search(link.strip()).group(1)
+        return f"MotoTally {series} (race on the event date)"
     if mototally.is_link(link):
         series, year, event = mototally.parse_link(link)
         return f"MotoTally {series} {year}/{event}"
@@ -22,10 +25,15 @@ def links(results_url) -> list[str]:
     return found
 
 
-def fetch_results(results_url) -> tuple[list[dict], list[tuple[str, int]]]:
-    """All results for an event, plus (source label, count) per link for the log."""
+def fetch_results(results_url, race_date=None) -> tuple[list[dict], list[tuple[str, int]]]:
+    """All results for an event, plus (source label, count) per link for the log.
+    A MotoTally series page (no race number) is resolved to the race on race_date."""
     results, counts = [], []
     for link in links(results_url):
+        if mototally.is_index_link(link):
+            if not race_date:
+                raise ValueError(f"{link} is a series results page; the event needs a race date to pick the race.")
+            link = mototally.resolve_index_link(link, race_date)
         label = describe(link)
         if mototally.is_link(link):
             rows = mototally.fetch_results(link)

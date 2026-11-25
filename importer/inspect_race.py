@@ -33,7 +33,7 @@ def main(argv):
     for ev in events:
         print(f"\n=== {ev['name']} ({ev['race_date']}) {ev['id']}")
         try:
-            raw, _ = sources.fetch_results(ev["results_url"])
+            raw, _ = sources.fetch_results(ev["results_url"], ev.get("race_date"))
         except Exception as e:
             print("  could not fetch:", e)
             continue

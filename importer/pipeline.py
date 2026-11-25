@@ -648,7 +648,7 @@ def import_event(store, event: dict, log=print, results_file: str | None = None,
     else:
         if not event.get("results_url"):
             raise EventImportError("Event has no results_url.")
-        raw, counts = sources.fetch_results(event["results_url"])
+        raw, counts = sources.fetch_results(event["results_url"], event.get("race_date"))
         log(f"Fetched {len(raw)} results from " + ", ".join(f"{label} ({n})" for label, n in counts))
     if not raw:
         raise EventImportError("No results were found (they may not be posted yet).")

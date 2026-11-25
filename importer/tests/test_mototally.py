@@ -244,3 +244,22 @@ class RealIowaPage(unittest.TestCase):
                           ("Bryan Johnson", 7, 13, "199", "Scored"), ("David Stickel", None, None, "112", "DNF")])
         self.assertEqual(rows[0]["classGroup"], "Overall A")
         self.assertEqual(rows[0]["source_key"], "k/r312")
+
+
+class SeriesIndexLink(unittest.TestCase):
+    INDEX = "https://www.moto-tally.com/IERA/HS/Results.aspx"
+
+    def test_index_link_is_recognised(self):
+        self.assertTrue(mototally.is_index_link(self.INDEX))
+        self.assertFalse(mototally.is_index_link(self.INDEX + "/2026/1"))
+        self.assertEqual(sources.describe(self.INDEX), "MotoTally IERA/HS (race on the event date)")
+
+    def test_race_picked_by_date(self):
+        with mock.patch.object(mototally, "_get", return_value=page("mototally_real_IERA_HS_index.html")):
+            self.assertEqual(mototally.resolve_index_link(self.INDEX, "2026-03-22"), self.INDEX + "/2026/1")
+            self.assertEqual(mototally.resolve_index_link(self.INDEX, "2025-03-23"), self.INDEX + "/2025/1")
+            with self.assertRaises(ValueError) as two:
+                mototally.resolve_index_link(self.INDEX, "2026-08-01")
+            self.assertIn("Dayton Enduro Youth 50's HS: " + self.INDEX + "/2026/35", str(two.exception))
+            with self.assertRaises(ValueError):
+                mototally.resolve_index_link(self.INDEX, "2026-07-04")

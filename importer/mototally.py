@@ -27,12 +27,50 @@ LINK_RE = re.compile(r"moto-tally\.com/((?:[^/?#]+/)*?[^/?#]+)/Results\.aspx/(\d
 STATUS_WORDS = {"DNF", "DNS", "DQ", "DSQ", "DISQ"}
 
 
+# A series' main results page, without a race: https://www.moto-tally.com/IERA/HS/Results.aspx
+INDEX_RE = re.compile(r"moto-tally\.com/((?:[^/?#]+/)*?[^/?#]+)/Results\.aspx/?(?:[?#].*)?$", re.I)
+
+
 def is_link(link: str) -> bool:
-    return bool(LINK_RE.search(str(link or "")))
+    return bool(LINK_RE.search(str(link or "")) or INDEX_RE.search(str(link or "").strip()))
+
+
+def is_index_link(link: str) -> bool:
+    return not LINK_RE.search(str(link or "")) and bool(INDEX_RE.search(str(link or "").strip()))
+
+
+def races_on_index(text: str) -> list[tuple[str, str, str, str]]:
+    """(year, race number, date 'YYYY-MM-DD', name) for every race row on a series results page."""
+    races = []
+    for row in re.findall(r"<tr[^>]*>(.*?)</tr>", text, re.S | re.I):
+        m = re.search(r"selectEvent\((\d{4})\s*,\s*(\d+)\)", row)
+        d = re.search(r"(\d{1,2})/(\d{1,2})/(\d{4})", re.sub(r"<[^>]+>", " ", row))
+        if not (m and d):
+            continue
+        cells = [" ".join(re.sub(r"<[^>]+>", " ", c).split()) for c in re.findall(r"<td[^>]*>(.*?)</td>", row, re.S | re.I)]
+        name = html_lib.unescape(cells[1]) if len(cells) > 1 else ""
+        races.append((m.group(1), m.group(2), f"{d.group(3)}-{int(d.group(1)):02d}-{int(d.group(2)):02d}", name))
+    return races
+
+
+def resolve_index_link(link: str, race_date: str) -> str:
+    """Turn a series results page link into the link of the race held on race_date."""
+    series = INDEX_RE.search(str(link).strip()).group(1)
+    base = f"https://www.moto-tally.com/{series}/Results.aspx"
+    found = [r for r in races_on_index(_get(base)) if r[2] == str(race_date)[:10]]
+    if len(found) == 1:
+        return f"{base}/{found[0][0]}/{found[0][1]}"
+    if not found:
+        raise ValueError(f"No race on {race_date} on {base}. Put the race's own link in results_url, "
+                         f"e.g. {base}/<year>/<race number>.")
+    options = "; ".join(f"{name}: {base}/{y}/{n}" for y, n, _, name in found)
+    raise ValueError(f"{len(found)} races on {race_date} on {base}; put the right one in results_url: {options}")
 
 
 def parse_link(link: str) -> tuple[str, str, str]:
     m = LINK_RE.search(str(link or ""))
+    if not m and is_index_link(link):
+        raise ValueError("This is a series results page, not one race; it needs the event date to pick the race.")
     if not m:
         raise ValueError(
             f"Not a MotoTally race link: {link!r}. Use e.g. https://www.moto-tally.com/CORCS/Results.aspx/2026/3")
