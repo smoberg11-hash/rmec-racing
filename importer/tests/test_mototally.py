@@ -215,3 +215,32 @@ class AliasToRiderId(unittest.TestCase):
         finally:
             os.unlink(f.name)
         self.assertEqual(ids, {("name", "rori dyar"): "kid-account"})
+
+
+class OtherSeries(unittest.TestCase):
+    def test_multi_part_series_link(self):
+        link = "https://www.moto-tally.com/IERA/HS/Results.aspx/2026/1"
+        self.assertEqual(mototally.parse_link(link), ("IERA/HS", "2026", "1"))
+        self.assertEqual(sources.describe(link), "MotoTally IERA/HS 2026/1")
+        self.assertEqual(mototally.parse_link("https://www.moto-tally.com/CORCS/Results.aspx/2026/4/C2/S"),
+                         ("CORCS", "2026", "4"))
+
+    def test_extra_ama_column(self):
+        html = page("mototally_2026_3_C30.html").replace(
+            '<th rowspan="3"><a>Rider Name</a></th>', '<th rowspan="3">AMA#</th><th rowspan="3"><a>Rider Name</a></th>'
+        ).replace('<td><a>Jace Brinkman</a></td>', '<td>1234</td><td><a>Jace Brinkman</a></td>')
+        rows = mototally.parse_class_page(html, "Mini 4", source="x", key_prefix="k")
+        self.assertEqual(rows[0]["fullName"], "Jace Brinkman")   # the row with the extra cell is read
+        self.assertEqual(len(rows), 1)                           # rows without it don't match this layout
+
+
+class RealIowaPage(unittest.TestCase):
+    def test_iera_hare_scramble_with_ama_column(self):
+        rows = mototally.parse_class_page(page("mototally_real_IERA_HS_2026_1_C1.html"), "AA",
+                                          source="x", key_prefix="k")
+        self.assertEqual([(r["fullName"], r["classPosition"], r["groupPosition"], r["displayedNumber"], r["standing"])
+                          for r in rows],
+                         [("Benjamin Ward", 1, 1, "251", "Scored"), ("Ayden White", 2, 2, "881", "Scored"),
+                          ("Bryan Johnson", 7, 13, "199", "Scored"), ("David Stickel", None, None, "112", "DNF")])
+        self.assertEqual(rows[0]["classGroup"], "Overall A")
+        self.assertEqual(rows[0]["source_key"], "k/r312")

@@ -22,7 +22,8 @@ import urllib.error
 import urllib.request
 from html.parser import HTMLParser
 
-LINK_RE = re.compile(r"moto-tally\.com/([^/]+)/Results\.aspx/(\d{4})/(\d+)", re.I)
+# Series can be one or more path parts: /CORCS/Results.aspx/2026/3 or /IERA/HS/Results.aspx/2026/1
+LINK_RE = re.compile(r"moto-tally\.com/((?:[^/?#]+/)*?[^/?#]+)/Results\.aspx/(\d{4})/(\d+)", re.I)
 STATUS_WORDS = {"DNF", "DNS", "DQ", "DSQ", "DISQ"}
 
 
