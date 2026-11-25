@@ -32,7 +32,11 @@ python3 -m unittest discover -s importer/tests -t .   # run the tests
 Needs Python 3.10+ and nothing else to install.
 
 ## A LiveLaps class name doesn't match
-Add it to `CLASS_ALIASES` at the top of `pipeline.py` (LiveLaps name → Supabase class name), or set `classes.livelaps_class_id`.
+Promoters name classes differently ("Novice C 250", "Pro AA", ...). Run
+```bash
+python3 -m importer --find-classes
+```
+It adds every unmatched name to `importer/class_map.csv` with a suggestion. Open it (Numbers/Excel are fine, save as CSV) and fill in `rmec_class` with the RMEC class name, or `SKIP` for classes that don't count for RMEC points. Then run the import again.
 
 ## Scheduling
 `importer/import-results.yml` runs it weekly on GitHub Actions. Move it to `.github/workflows/import-results.yml` once the repo is on GitHub. Add two repository secrets, `SUPABASE_URL` and `SUPABASE_SECRET_KEY`. You can also run it by hand from the Actions tab and choose an event or a dry run.

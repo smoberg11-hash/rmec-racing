@@ -271,3 +271,23 @@ class RealHaystackSample(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ClassMapSheet(unittest.TestCase):
+    def test_load_and_skip(self):
+        import tempfile
+        with tempfile.NamedTemporaryFile("w", suffix=".csv", delete=False, newline="") as f:
+            f.write("livelaps_class,rmec_class,suggested,riders,first_seen_at\n"
+                    "Novice C 250,C 250,C 250,8,x\nVintage,SKIP,,2,x\nMaster 40,,,7,x\n")
+        try:
+            got = pipeline.load_class_map(f.name)
+        finally:
+            os.unlink(f.name)
+        self.assertEqual(got, {"novice c 250": "c 250", "vintage": pipeline.SKIP})
+
+    def test_suggestions(self):
+        names = ["AA", "A Open", "B 30+", "C 250", "C 60+", "C Open", "A Ladies"]
+        self.assertEqual(pipeline.suggest_class("Pro AA", names), "AA")
+        self.assertEqual(pipeline.suggest_class("Over 60+ C", names), "C 60+")
+        self.assertEqual(pipeline.suggest_class("C <251", names), "C 250")
+        self.assertEqual(pipeline.suggest_class("Vintage", names), "")

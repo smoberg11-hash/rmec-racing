@@ -45,6 +45,54 @@ def write_report(path, proposed):
         w.writerows(proposed)
 
 
+def find_classes(store, events):
+    """Add every LiveLaps class name that doesn't match an RMEC class to class_map.csv."""
+    from . import livelaps
+
+    classes, series = store.classes(), store.series()
+    class_map = pipeline.load_class_map()
+    found = {}  # normalized name -> [display name, riders, first event]
+    for ev in events:
+        try:
+            raw = livelaps.fetch_results(ev["results_url"])
+        except Exception as e:  # keep going; report at the end
+            print(f"  {ev.get('name')}: couldn't fetch results ({e})")
+            continue
+        match = pipeline.build_class_matcher(classes, ev, series)
+        for r in raw:
+            key = pipeline.normalize(r.get("className"))
+            if key in class_map or match(r) not in (None, pipeline.AMBIGUOUS):
+                continue
+            entry = found.setdefault(key, [r.get("className"), 0, f"{ev.get('name')} ({ev.get('race_date')})"])
+            entry[1] += 1
+
+    rows = []
+    if os.path.exists(pipeline.CLASS_MAP_FILE):
+        with open(pipeline.CLASS_MAP_FILE, newline="", encoding="utf-8-sig") as f:
+            rows = list(csv.DictReader(f))
+    known = {pipeline.normalize(r.get("livelaps_class")) for r in rows}
+    rmec_names = sorted({c["name"] for c in classes})
+    added = 0
+    for key, (name, riders, where) in sorted(found.items()):
+        if key in known:
+            continue
+        rows.append({"livelaps_class": name, "rmec_class": "",
+                     "suggested": pipeline.suggest_class(name, rmec_names),
+                     "riders": riders, "first_seen_at": where})
+        added += 1
+    with open(pipeline.CLASS_MAP_FILE, "w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=pipeline.CLASS_MAP_COLUMNS, extrasaction="ignore")
+        w.writeheader()
+        w.writerows(rows)
+
+    blank = sum(1 for r in rows if not (r.get("rmec_class") or "").strip())
+    print(f"\n{added} new class names added; {blank} rows in the sheet still need an rmec_class.")
+    print(f"Open {pipeline.CLASS_MAP_FILE}")
+    print("Fill in rmec_class with an RMEC class name (see the 'suggested' column) or SKIP, save, then run the import again.")
+    print("RMEC classes:", ", ".join(rmec_names))
+    return 0
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="python3 -m importer", description="Import LiveLaps results into Supabase and score them.")
     ap.add_argument("--apply", action="store_true", help="actually write to the database (default is a dry run)")
@@ -52,6 +100,8 @@ def main(argv=None):
     ap.add_argument("--offline", metavar="FOLDER", help="use CSV exports in FOLDER instead of Supabase (dry run only)")
     ap.add_argument("--results-file", help="read LiveLaps results from a saved JSON file instead of the API")
     ap.add_argument("--report", metavar="FOLDER", help="write a points CSV per event into FOLDER")
+    ap.add_argument("--find-classes", action="store_true",
+                    help="list LiveLaps class names that need an RMEC class in importer/class_map.csv")
     args = ap.parse_args(argv)
 
     here = os.path.dirname(os.path.abspath(__file__))
@@ -91,6 +141,9 @@ def main(argv=None):
         return 0
     if args.results_file and len(events) != 1:
         ap.error("--results-file needs --event (it holds one race).")
+
+    if args.find_classes:
+        return find_classes(store, events)
 
     failures = 0
     for ev in events:

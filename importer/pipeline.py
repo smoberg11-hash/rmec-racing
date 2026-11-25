@@ -19,6 +19,48 @@ CLASS_ALIASES = {
 }
 
 
+# Spreadsheet of LiveLaps class names -> RMEC class names, kept next to this file.
+# rmec_class = an RMEC class name from Supabase, or SKIP for classes that don't
+# count for RMEC points. Fill it with:  python3 -m importer --find-classes
+CLASS_MAP_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "class_map.csv")
+CLASS_MAP_COLUMNS = ["livelaps_class", "rmec_class", "suggested", "riders", "first_seen_at"]
+SKIP = "skip"
+
+
+def load_class_map(path: str | None = None) -> dict:
+    """{normalized LiveLaps name: normalized RMEC name or 'skip'} for rows that are filled in."""
+    path = path or CLASS_MAP_FILE
+    out = {}
+    if os.path.exists(path):
+        with open(path, newline="", encoding="utf-8-sig") as f:
+            for row in csv.DictReader(f):
+                target = normalize(row.get("rmec_class"))
+                if row.get("livelaps_class") and target:
+                    out[normalize(row["livelaps_class"])] = target
+    return out
+
+
+def all_aliases() -> dict:
+    aliases = {normalize(k): normalize(v) for k, v in CLASS_ALIASES.items()}
+    aliases.update(load_class_map())
+    return aliases
+
+
+def suggest_class(livelaps_name: str, rmec_names) -> str:
+    """Best guess at the RMEC class for a promoter's class name ('' if no idea)."""
+    names = {normalize(n): n for n in rmec_names}
+    n = normalize(livelaps_name)
+    n = re.sub(r"\bwomen\b", "ladies", n)
+    n = re.sub(r"^(novice|intermediate|expert|pro)\s+", "", n)
+    n = re.sub(r"^([abc])(\d)", r"\1 \2", n)
+    m = re.match(r"^over (\d+)\+? ([abc])$", n)
+    if m:
+        n = f"{m.group(2)} {m.group(1)}+"
+    n = re.sub(r"^([abc]) ?<\s?251$", r"\1 250", n)
+    n = re.sub(r"^([abc]) ?251\+$", r"\1 open", n)
+    return names.get(n, "")
+
+
 class EventImportError(RuntimeError):
     """Raised when an event can't be imported safely. Nothing is marked processed."""
 
@@ -143,7 +185,7 @@ def build_class_matcher(classes: list[dict], event: dict, series: list[dict]):
     by_name: dict = {}
     for c in classes:
         by_name.setdefault((c.get("series_id"), normalize(c.get("name"))), []).append(c)
-    aliases = {normalize(k): normalize(v) for k, v in CLASS_ALIASES.items()}
+    aliases = all_aliases()
 
     def match(r: dict):
         """Returns a class row, None if nothing matches, or AMBIGUOUS if several classes share the name."""
@@ -204,7 +246,8 @@ def result_rows(results, event_id, rider_ids: dict, class_for) -> list[dict]:
         listed = ", ".join(f"'{k}' ({v})" for k, v in sorted(missing_classes.items(), key=lambda kv: str(kv[0])))
         problems.append(
             f"These LiveLaps classes don't match any Supabase class: {listed}. "
-            "Add them to CLASS_ALIASES in importer/pipeline.py or fix the class name in Supabase."
+            "Run `python3 -m importer --find-classes`, then fill in importer/class_map.csv "
+            "(the RMEC class for each, or SKIP if it doesn't count for RMEC points)."
         )
     if ambiguous:
         problems.append(
@@ -383,6 +426,12 @@ def import_event(store, event: dict, log=print, results_file: str | None = None)
     if not raw:
         raise EventImportError("LiveLaps returned no results (results may not be posted yet).")
     raw = drop_ignored_and_empty_duplicates(raw, log)
+    skip = {k for k, v in load_class_map().items() if v == SKIP}
+    skipped = [r for r in raw if normalize(r.get("className")) in skip]
+    if skipped:
+        names = sorted({str(r.get("className")) for r in skipped})
+        log(f"  Skipping {len(skipped)} results in non-RMEC classes: {', '.join(names)}")
+        raw = [r for r in raw if normalize(r.get("className")) not in skip]
 
     classes, divisions, series = store.classes(), store.divisions(), store.series()
 
