@@ -42,7 +42,7 @@ type Result = {
 };
 
 function LoadingStats() {
-  return <main className="p-8 text-gray-500">Loading rider stats...</main>;
+  return <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-8 text-gray-500 sm:px-6">Loading rider stats...</main>;
 }
 
 export default async function RiderStatsPage({
@@ -70,7 +70,9 @@ async function RiderStatsContent({
 
   const [riderResponse, seasonsResponse, eventsResponse, classesResponse, resultsResponse] =
     await Promise.all([
-      selectPublicRows<Rider>("public_riders", "id, full_name, rider_number"),
+      selectPublicRows<Rider>("public_riders", "id, full_name, rider_number", {
+        equals: { column: "id", value: riderId },
+      }),
       selectPublicRows<Season>("seasons", "id, year, name", {
         orderBy: "year",
         ascending: false,
@@ -82,7 +84,8 @@ async function RiderStatsContent({
       selectPublicRows<RaceClass>("classes", "id, name"),
       selectPublicRows<Result>(
         "results",
-        "id, rider_id, event_id, class_id, position, overall_position, points, division_points, dns, dnf, disqualified"
+        "id, rider_id, event_id, class_id, position, overall_position, points, division_points, dns, dnf, disqualified",
+        { equals: { column: "rider_id", value: riderId } },
       ),
     ]);
 
@@ -99,7 +102,7 @@ async function RiderStatsContent({
     !Array.isArray(resultsResponse.data)
   ) {
     return (
-      <main className="mx-auto max-w-5xl px-4 py-8">
+      <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-8 sm:px-6">
         <Link href="/riders" className="text-blue-600 hover:underline">
           ← All Riders
         </Link>
@@ -193,7 +196,7 @@ async function RiderStatsContent({
   const eventCount = new Set(riderResults.map((result) => result.event_id)).size;
 
   return (
-    <main className="mx-auto max-w-6xl px-4 py-8">
+    <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-8 sm:px-6">
       <Link href="/riders" className="text-sm text-blue-600 hover:underline">
         ← All Riders
       </Link>

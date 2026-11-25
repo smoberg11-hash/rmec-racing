@@ -26,7 +26,7 @@ async function JuniorStandings() {
 
 export default function JuniorStandingsPage() {
   return (
-    <main className="mx-auto max-w-6xl space-y-8 p-6">
+    <main className="mx-auto w-full max-w-7xl flex-1 space-y-8 p-6">
       <header className="space-y-2">
         <Link href="/standings" className="text-sm text-blue-600 underline">
           ← Adult standings

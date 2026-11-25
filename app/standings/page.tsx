@@ -28,7 +28,7 @@ async function AdultStandings() {
 
 export default function StandingsPage() {
   return (
-    <main className="mx-auto max-w-6xl space-y-8 p-6">
+    <main className="mx-auto w-full max-w-7xl flex-1 space-y-8 p-6">
       <header className="space-y-2">
         <Link href="/" className="text-sm text-blue-600 underline">
           ← Home
