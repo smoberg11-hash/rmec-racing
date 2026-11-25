@@ -23,21 +23,47 @@ CLASS_ALIASES = {
 # rmec_class = an RMEC class name from Supabase, or SKIP for classes that don't
 # count for RMEC points. Fill it with:  python3 -m importer --find-classes
 CLASS_MAP_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "class_map.csv")
-CLASS_MAP_COLUMNS = ["livelaps_class", "rmec_class", "note", "suggested", "riders", "first_seen_at"]
+CLASS_MAP_COLUMNS = ["livelaps_class", "rmec_class", "source", "note", "suggested", "riders", "first_seen_at"]
 SKIP = "skip"
 
 
-def load_class_map(path: str | None = None) -> dict:
-    """{normalized LiveLaps name: normalized RMEC name or 'skip'} for rows that are filled in."""
+def load_class_map_rows(path: str | None = None) -> list[tuple[str, str, str]]:
+    """(normalized class name, normalized RMEC class or 'skip', normalized source) for filled-in rows.
+    `source` is optional: when set (e.g. "MotoTally IERA/HS"), the row only applies to results
+    from that site/series, so a name like "AA" can be skipped there without skipping RMEC's AA."""
     path = path or CLASS_MAP_FILE
-    out = {}
+    out = []
     if os.path.exists(path):
         with open(path, newline="", encoding="utf-8-sig") as f:
             for row in csv.DictReader(f):
                 target = normalize(row.get("rmec_class"))
                 if row.get("livelaps_class") and target:
-                    out[normalize(row["livelaps_class"])] = target
+                    out.append((normalize(row["livelaps_class"]), target, normalize(row.get("source"))))
     return out
+
+
+def load_class_map(path: str | None = None) -> dict:
+    """{normalized class name: RMEC class or 'skip'} for rows that apply everywhere (no source)."""
+    return {name: target for name, target, source in load_class_map_rows(path) if not source}
+
+
+def class_lookup(rows=None):
+    """Returns target(class_name, source_label) -> normalized RMEC class, 'skip', or None.
+    Rows for a matching source win over rows without a source."""
+    rows = load_class_map_rows() if rows is None else rows
+    builtin = {normalize(k): normalize(v) for k, v in CLASS_ALIASES.items()}
+
+    def target(class_name, source_label=None):
+        name, label = normalize(class_name), normalize(source_label)
+        for n, t, src in rows:
+            if src and n == name and label.startswith(src):
+                return t
+        for n, t, src in rows:
+            if not src and n == name:
+                return t
+        return builtin.get(name)
+
+    return target
 
 
 def all_aliases() -> dict:
@@ -298,7 +324,7 @@ def build_class_matcher(classes: list[dict], event: dict, series: list[dict]):
     by_name: dict = {}
     for c in classes:
         by_name.setdefault((c.get("series_id"), normalize(c.get("name"))), []).append(c)
-    aliases = all_aliases()
+    lookup = class_lookup()
 
     def match(r: dict):
         """Returns a class row, None if nothing matches, or AMBIGUOUS if several classes share the name."""
@@ -306,7 +332,7 @@ def build_class_matcher(classes: list[dict], event: dict, series: list[dict]):
         if hit and hit.get("series_id") in ({ev_series} | sibling_series):
             return hit
         name = normalize(r.get("className"))
-        name = aliases.get(name, name)
+        name = lookup(r.get("className"), r.get("_livelaps_race")) or name
         if (ev_series, name) in by_name:
             found = by_name[(ev_series, name)]
             return found[0] if len(found) == 1 else AMBIGUOUS
@@ -428,14 +454,27 @@ def fill_group_positions(raw: list[dict], rows: list[dict], classes_by_id: dict,
         if all(row["overall_position"] is not None for _, row in eligible):
             continue
         groups = {str(r.get("classGroup")) for r, _ in entries if r.get("classGroup") not in (None, "")}
-        if len(groups) > 1 or not all(_int_or_none(r.get("groupPosition")) for r, _ in eligible):
-            continue
-        for r, row in entries:
-            row["overall_position"] = _int_or_none(r.get("groupPosition"))
         classes = sorted({str(r.get("className")) for r, _ in entries})
-        log(f"  No overall positions from LiveLaps for {', '.join(classes)}; "
-            f"ranking that division by group position{' (group ' + groups.pop() + ')' if groups else ''}")
-        used.add(div_id)
+        if len(groups) <= 1 and all(_int_or_none(r.get("groupPosition")) for r, _ in eligible):
+            for r, row in entries:
+                row["overall_position"] = _int_or_none(r.get("groupPosition"))
+            log(f"  No overall positions for {', '.join(classes)}; "
+                f"ranking that division by group position{' (group ' + groups.pop() + ')' if groups else ''}")
+            used.add(div_id)
+            continue
+        links = {r.get("_livelaps_race") for r, _ in eligible}
+        if eligible and len(links) == 1 and all(r.get("enduroScore") for r, _ in eligible):
+            # No shared overall/group place (e.g. RMEC classes added to another series' enduro):
+            # rank the division by enduro score -- most checks, then fewest minutes, then seconds.
+            ordered = sorted(eligible, key=lambda e: tuple(e[0]["enduroScore"]))
+            for place, (_, row) in enumerate(ordered, start=1):
+                row["overall_position"] = place
+            ranked = {id(row) for _, row in ordered}
+            for r, row in entries:
+                if id(row) not in ranked:
+                    row["overall_position"] = None
+            log(f"  No overall positions for {', '.join(classes)}; ranking that division by enduro score")
+            used.add(div_id)
     return used
 
 
@@ -675,12 +714,12 @@ def import_event(store, event: dict, log=print, results_file: str | None = None,
     if not raw:
         raise EventImportError("No results were found (they may not be posted yet).")
     raw = drop_ignored_and_empty_duplicates(raw, log)
-    skip = {k for k, v in load_class_map().items() if v == SKIP}
-    skipped = [r for r in raw if normalize(r.get("className")) in skip]
+    lookup = class_lookup()
+    skipped = [r for r in raw if lookup(r.get("className"), r.get("_livelaps_race")) == SKIP]
     if skipped:
         names = sorted({str(r.get("className")) for r in skipped})
         log(f"  Skipping {len(skipped)} results in non-RMEC classes: {', '.join(names)}")
-        raw = [r for r in raw if normalize(r.get("className")) not in skip]
+        raw = [r for r in raw if lookup(r.get("className"), r.get("_livelaps_race")) != SKIP]
 
     classes, divisions, series = store.classes(), store.divisions(), store.series()
 

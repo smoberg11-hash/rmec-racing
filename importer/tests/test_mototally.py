@@ -305,3 +305,26 @@ class FillFromOverallPages(unittest.TestCase):
         with mock.patch.object(mototally, "_get", side_effect=lambda url: pages[url]), mock.patch.object(mototally.time, "sleep"):
             rows = mototally.fetch_results(base)
         self.assertEqual((rows[0]["fullName"], rows[0]["groupPosition"], rows[0]["classGroup"]), ("Byron Sutter", 7, "Overall A"))
+
+
+class ScopedClassMapAndEnduroScore(unittest.TestCase):
+    def test_source_scoped_rows(self):
+        rows = [("aa", "skip", "mototally iera/hs"), ("+45a (rmec)", "a 45+", "mototally iera/hs"), ("pro aa", "aa", "")]
+        target = pipeline.class_lookup(rows)
+        self.assertEqual(target("AA", "MotoTally IERA/HS 2026/30"), "skip")
+        self.assertIsNone(target("AA", "LiveLaps race 83628"))      # RMEC's own AA is untouched
+        self.assertEqual(target("+45A (RMEC)", "MotoTally IERA/HS 2026/30"), "a 45+")
+        self.assertEqual(target("Pro AA", "LiveLaps race 1"), "aa")
+        self.assertEqual(target("Electric Open", None), "e-bike")   # built-in alias still works
+
+    def test_division_ranked_by_enduro_score(self):
+        classes = {"a45": {"id": "a45", "division_id": "div-A"}, "a250": {"id": "a250", "division_id": "div-A"}}
+        raw = [{"className": "+45A (RMEC)", "enduroScore": (-8, 44, 15), "_livelaps_race": "m"},
+               {"className": "+45A (RMEC)", "enduroScore": (-7, 48, 12), "_livelaps_race": "m"},
+               {"className": "A 250 (RMEC)", "enduroScore": (-8, 40, 2), "_livelaps_race": "m"},
+               {"className": "A 250 (RMEC)", "enduroScore": None, "_livelaps_race": "m"}]
+        rows = [{"class_id": c, "overall_position": None, "dns": False, "dnf": d, "disqualified": False}
+                for c, d in (("a45", False), ("a45", False), ("a250", False), ("a250", True))]
+        used = pipeline.fill_group_positions(raw, rows, classes, log=lambda *_: None)
+        self.assertEqual([r["overall_position"] for r in rows], [2, 3, 1, None])
+        self.assertEqual(used, {"div-A"})

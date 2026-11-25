@@ -251,6 +251,11 @@ def parse_class_page(text: str, class_name: str, *, source: str, key_prefix: str
             # Hare scrambles report laps; enduros don't, so a placed rider counts as "scored".
             "sectionsCompleted": laps if laps is not None else (1 if class_place else 0),
             "totalCumulatedTime": extra.get("Total Time") or None,
+            # Enduro score, when the page has it: checks reached, then minutes and seconds of
+            # penalty (fewer is better). Used to rank a division when there's no overall place.
+            "enduroScore": ((-_int(extra.get("Num Chk")), _int(extra.get("Min")), _int(extra.get("Sec")))
+                            if class_place and None not in (_int(extra.get("Num Chk")), _int(extra.get("Min")), _int(extra.get("Sec")))
+                            else None),
             "averageTime": None,
             "bestTime": None,
             "_livelaps_race": source,

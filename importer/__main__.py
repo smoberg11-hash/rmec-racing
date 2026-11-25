@@ -50,7 +50,7 @@ def find_classes(store, events):
     from . import sources
 
     classes, series = store.classes(), store.series()
-    class_map = pipeline.load_class_map()
+    lookup = pipeline.class_lookup()
     found = {}  # normalized name -> [display name, riders, first event]
     for ev in events:
         try:
@@ -61,7 +61,7 @@ def find_classes(store, events):
         match = pipeline.build_class_matcher(classes, ev, series)
         for r in raw:
             key = pipeline.normalize(r.get("className"))
-            if key in class_map or match(r) not in (None, pipeline.AMBIGUOUS):
+            if lookup(r.get("className"), r.get("_livelaps_race")) == pipeline.SKIP or match(r) not in (None, pipeline.AMBIGUOUS):
                 continue
             entry = found.setdefault(key, [r.get("className"), 0, f"{ev.get('name')} ({ev.get('race_date')})"])
             entry[1] += 1
