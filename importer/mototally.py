@@ -147,7 +147,9 @@ def parse_class_page(text: str, class_name: str, *, source: str, key_prefix: str
     if group_label.lower().startswith("oaplace"):
         # Plain layout: OAPlace13 | OASPlace13 | OAPoints13 | CPlace | CSPlace | CPoints | Rider Name | ...
         # (an overall group with no display name; "13" is MotoTally's group number)
-        group = "Overall group " + (re.sub(r"\D", "", group_label) or "?")
+        # "OAPlace1" is the overall group with code O1 in the class menu, e.g. "Overall A/B".
+        number = re.sub(r"\D", "", group_label)
+        group = dict(page.options).get(f"O{number}") or f"Overall group {number or '?'}"
         names = [c[1] for c in header[6:]]
     else:
         # Grouped layout: "Overall A/B Results" | "<class> Results" | Rider Name | ...

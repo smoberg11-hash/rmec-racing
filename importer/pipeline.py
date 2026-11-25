@@ -197,6 +197,23 @@ def named_rider_rows(results: list[dict]) -> dict:
     return out
 
 
+RIDER_ALIASES_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "rider_aliases.csv")
+
+
+def load_rider_aliases(path: str | None = None) -> dict:
+    """{normalized name on the results site: normalized name of the existing rider}.
+    For the same person spelled differently, e.g. MotoTally "Dave Bower" = "David Bower"."""
+    path = path or RIDER_ALIASES_FILE
+    out = {}
+    if os.path.exists(path):
+        with open(path, newline="", encoding="utf-8-sig") as f:
+            for row in csv.DictReader(f):
+                a, b = normalize(row.get("results_name")), normalize(row.get("rider_name"))
+                if a and b:
+                    out[a] = b
+    return out
+
+
 def match_named_riders(store, named: dict, log=print) -> dict:
     """Match riders without a LiveLaps id to existing riders by full name.
     One match: use it. Several: stop and list them. None: create a new rider
@@ -212,9 +229,10 @@ def match_named_riders(store, named: dict, log=print) -> dict:
         if r.get("last_name"):
             by_last.setdefault(normalize(r["last_name"]), []).append(r)
 
+    aliases = load_rider_aliases()
     ids, new, clashes = {}, [], []
     for key, row in named.items():
-        found = list(by_name.get(key[1], {}).values())
+        found = list(by_name.get(aliases.get(key[1], key[1]), {}).values())
         if len(found) == 1:
             ids[key] = found[0]["id"]
         elif len(found) > 1:
@@ -232,7 +250,7 @@ def match_named_riders(store, named: dict, log=print) -> dict:
                    if first and normalize(r.get("first_name"))[:3] == first[:3]]
         if similar:
             log(f"  ? New rider {row['full_name']} looks like existing {', '.join(similar)}. "
-                "If it's the same person, rename one so the names match, then re-run.")
+                "If it's the same person, add a row to importer/rider_aliases.csv, then re-run.")
     if not new:
         return ids
     if store.dry_run:

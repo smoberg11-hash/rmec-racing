@@ -183,4 +183,19 @@ class RealPages(unittest.TestCase):
         rows = mototally.parse_class_page(page("mototally_real_2026_12_C112.html"), "VINTAGE EXP", source="x", key_prefix="k")
         self.assertEqual(len(rows), 1)
         self.assertEqual((rows[0]["classPosition"], rows[0]["groupPosition"], rows[0]["classGroup"], rows[0]["displayedNumber"]),
-                         (1, 4, "Overall group 13", "377"))
+                         (1, 4, "Overall RMVMC XC", "377"))
+
+
+class RiderAliases(unittest.TestCase):
+    def test_alias_links_spelling_variant(self):
+        import tempfile
+        with tempfile.NamedTemporaryFile("w", suffix=".csv", delete=False) as f:
+            f.write("results_name,rider_name,note\nSeth Hilman,Seth Hillman,\n")
+        store = NameStore([{"id": "seth", "full_name": "Seth Hillman"}], [])
+        named = {("name", "seth hilman"): {"full_name": "Seth Hilman", "first_name": "Seth", "last_name": "Hilman"}}
+        try:
+            with mock.patch.object(pipeline, "RIDER_ALIASES_FILE", f.name):
+                ids = pipeline.match_named_riders(store, named, log=lambda *_: None)
+        finally:
+            os.unlink(f.name)
+        self.assertEqual(ids, {("name", "seth hilman"): "seth"})
