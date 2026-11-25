@@ -3,7 +3,6 @@
 import { useEffect, useRef, useState } from "react";
 import { rankStandings, type RaceResult, type Standing } from "@/lib/standings";
 import type { SeasonRace } from "@/lib/standings-data";
-import { SelectField } from "@/components/ui";
 
 type RaceClass = { id: string; name: string; division_id: string | null };
 type Division = { id: string; name: string };
@@ -49,28 +48,35 @@ export default function StandingsBoard({ classes, divisions, races, standingsByC
   const [division, setDivision] = useState(
     () => divisions.find((d) => d.name.toLowerCase().startsWith("a"))?.id ?? divisions[0]?.id ?? "",
   );
-  const [view, setView] = useState(hasDivisions ? DIVISION_ALL : classes[0]?.id ?? "");
+  // Which standings to show. Adult: starts with the division overall only. Junior: every class.
+  const [views, setViews] = useState<string[]>(() => (hasDivisions ? [DIVISION_ALL] : classes.map((c) => c.id)));
   // null = all races; otherwise the ids that are ticked.
   const [picked, setPicked] = useState<string[] | null>(null);
 
-  const classOptions = hasDivisions ? classes.filter((c) => c.division_id === division) : classes;
-  const isDivisionView = hasDivisions && view === DIVISION_ALL;
-  const full = (isDivisionView ? standingsByDivision[division] : standingsByClass[view]) ?? [];
-
-  // Races somebody in this standing actually rode, oldest first.
-  const available = races.filter((r) => full.some((s) => s.races[r.id]));
-  const availableIds = available.map((r) => r.id);
-  const selectedIds = picked === null ? availableIds : availableIds.filter((id) => picked.includes(id));
-  const shownRaces = available.filter((r) => selectedIds.includes(r.id));
-  const allSelected = selectedIds.length === availableIds.length;
-  const standings = allSelected ? full : forRaces(full, selectedIds, (r) => r.place === 1 && !r.status);
-
   const divisionName = divisions.find((d) => d.id === division)?.name ?? "Division";
-  const title = isDivisionView ? divisionName : classes.find((c) => c.id === view)?.name ?? "Class";
+  const classOptions = hasDivisions ? classes.filter((c) => c.division_id === division) : classes;
+  const viewOptions = [
+    ...(hasDivisions ? [{ id: DIVISION_ALL, primary: `${divisionName} overall`, secondary: "Division points" }] : []),
+    ...classOptions.map((c) => ({ id: c.id, primary: c.name })),
+  ];
+  const shownViews = viewOptions.map((o) => o.id).filter((id) => views.includes(id));
+
+  const tables = shownViews.map((id) => ({
+    id,
+    isDivision: id === DIVISION_ALL,
+    title: id === DIVISION_ALL ? `${divisionName} overall` : classes.find((c) => c.id === id)?.name ?? "Class",
+    full: (id === DIVISION_ALL ? standingsByDivision[division] : standingsByClass[id]) ?? [],
+  }));
+
+  // Races anyone in the shown standings rode, oldest first.
+  const available = races.filter((r) => tables.some((t) => t.full.some((s) => s.races[r.id])));
+  const availableIds = available.map((r) => r.id);
+  const selectedRaceIds = picked === null ? availableIds : availableIds.filter((id) => picked.includes(id));
+  const allRaces = selectedRaceIds.length === availableIds.length;
 
   function chooseDivision(id: string) {
     setDivision(id);
-    setView(DIVISION_ALL);
+    setViews([DIVISION_ALL]);
   }
 
   return (
@@ -99,59 +105,79 @@ export default function StandingsBoard({ classes, divisions, races, standingsByC
       )}
 
       <div className="grid gap-4 rounded-2xl border border-white/10 bg-[#141816] p-5 sm:grid-cols-2">
-        <SelectField
-          id="standings-class"
-          label={hasDivisions ? "Standings" : "Class"}
-          value={view}
-          onChange={(e) => setView(e.target.value)}
-        >
-          {hasDivisions && <option value={DIVISION_ALL}>All of {divisionName} — division points</option>}
-          {classOptions.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.name}
-            </option>
-          ))}
-        </SelectField>
-
-        <RacePicker races={available} selected={selectedIds} onChange={setPicked} />
+        <MultiSelect
+          label={hasDivisions ? "Standings" : "Classes"}
+          options={viewOptions}
+          selected={shownViews}
+          onChange={(ids) => setViews(ids ?? viewOptions.map((o) => o.id))}
+          allText={(n) => (hasDivisions ? `Overall + all classes (${n})` : `All classes (${n})`)}
+          noun={hasDivisions ? "standings" : "classes"}
+        />
+        <MultiSelect
+          label="Races"
+          options={available.map((r) => ({ id: r.id, primary: r.name, tag: shortDate(r.date) }))}
+          selected={selectedRaceIds}
+          onChange={setPicked}
+          allText={(n) => `All races (${n})`}
+          noun="races"
+        />
       </div>
 
-      <div className="overflow-hidden rounded-2xl border border-white/10 bg-[#141816]">
-        <div className="flex flex-wrap items-end justify-between gap-3 border-b border-white/10 px-5 py-4">
-          <div>
-            <h2 className="text-xl font-black uppercase tracking-tight">{title}</h2>
-            <p className="mt-1 text-sm text-neutral-400">
-              {allSelected
-                ? `${isDivisionView ? "Division" : "Class"} points from every race. Ties go to the rider with more wins.`
-                : `Totals and ranks for the ${shownRaces.length} selected race${shownRaces.length === 1 ? "" : "s"} only.`}
-            </p>
+      {tables.length === 0 && (
+        <p className="rounded-2xl border border-white/10 bg-[#141816] p-8 text-neutral-400">
+          Pick at least one standing above.
+        </p>
+      )}
+
+      {tables.map((t) => {
+        const shownRaces = available.filter((r) => selectedRaceIds.includes(r.id) && t.full.some((s) => s.races[r.id]));
+        const standings = allRaces ? t.full : forRaces(t.full, selectedRaceIds, (r) => r.place === 1 && !r.status);
+        return (
+          <div key={t.id} className="overflow-hidden rounded-2xl border border-white/10 bg-[#141816]">
+            <div className="flex flex-wrap items-end justify-between gap-3 border-b border-white/10 px-5 py-4">
+              <div>
+                <h2 className="text-xl font-black uppercase tracking-tight">{t.title}</h2>
+                <p className="mt-1 text-sm text-neutral-400">
+                  {allRaces
+                    ? `${t.isDivision ? "Division" : "Class"} points from every race. Ties go to the rider with more wins.`
+                    : `${t.isDivision ? "Division" : "Class"} points for the selected races only.`}
+                </p>
+              </div>
+              <p className="text-xs font-bold uppercase tracking-[0.2em] text-neutral-500">
+                {standings.length} rider{standings.length === 1 ? "" : "s"}
+              </p>
+            </div>
+            {t.full.length === 0 ? (
+              <p className="p-8 text-neutral-400">No standings for this class yet.</p>
+            ) : shownRaces.length === 0 ? (
+              <p className="p-8 text-neutral-400">Nobody in this class rode the selected races.</p>
+            ) : (
+              <SeasonTable standings={standings} races={shownRaces} />
+            )}
           </div>
-          <p className="text-xs font-bold uppercase tracking-[0.2em] text-neutral-500">
-            {standings.length} rider{standings.length === 1 ? "" : "s"}
-          </p>
-        </div>
-
-        {full.length === 0 ? (
-          <p className="p-8 text-neutral-400">No standings for this selection yet.</p>
-        ) : shownRaces.length === 0 ? (
-          <p className="p-8 text-neutral-400">Pick at least one race above.</p>
-        ) : (
-          <SeasonTable standings={standings} races={shownRaces} />
-        )}
-      </div>
+        );
+      })}
     </section>
   );
 }
 
-/** Multi-select race filter: a button that opens a checklist. */
-function RacePicker({
-  races,
+type Option = { id: string; primary: string; secondary?: string; tag?: string };
+
+/** Checklist dropdown. onChange(null) means "everything selected". */
+function MultiSelect({
+  label,
+  options,
   selected,
   onChange,
+  allText,
+  noun,
 }: {
-  races: SeasonRace[];
+  label: string;
+  options: Option[];
   selected: string[];
   onChange: (ids: string[] | null) => void;
+  allText: (n: number) => string;
+  noun: string;
 }) {
   const [open, setOpen] = useState(false);
   const box = useRef<HTMLDivElement>(null);
@@ -172,23 +198,23 @@ function RacePicker({
     };
   }, [open]);
 
-  const all = selected.length === races.length;
+  const all = options.length > 0 && selected.length === options.length;
   const summary = all
-    ? `All races (${races.length})`
+    ? allText(options.length)
     : selected.length === 0
-      ? "No races selected"
+      ? `No ${noun} selected`
       : selected.length === 1
-        ? races.find((r) => r.id === selected[0])?.name ?? "1 race"
-        : `${selected.length} of ${races.length} races`;
+        ? options.find((o) => o.id === selected[0])?.primary ?? `1 of ${options.length}`
+        : `${selected.length} of ${options.length} ${noun}`;
 
   function toggle(id: string) {
     const next = selected.includes(id) ? selected.filter((x) => x !== id) : [...selected, id];
-    onChange(next.length === races.length ? null : next);
+    onChange(next.length === options.length ? null : next);
   }
 
   return (
     <div ref={box} className="relative">
-      <span className="mb-2 block text-[11px] font-bold uppercase tracking-[0.2em] text-neutral-400">Races</span>
+      <span className="mb-2 block text-[11px] font-bold uppercase tracking-[0.2em] text-neutral-400">{label}</span>
       <button
         type="button"
         aria-haspopup="listbox"
@@ -200,7 +226,7 @@ function RacePicker({
       >
         <span className="truncate">{summary}</span>
         <span className="flex items-center gap-2">
-          {!all && (
+          {!all && selected.length > 1 && (
             <span className="rounded-full bg-lime-400 px-2 py-0.5 text-[11px] font-black text-[#101211]">{selected.length}</span>
           )}
           <svg
@@ -229,15 +255,15 @@ function RacePicker({
             </button>
           </div>
           <ul role="listbox" aria-multiselectable="true" className="max-h-80 overflow-y-auto py-1">
-            {races.map((r) => {
-              const on = selected.includes(r.id);
+            {options.map((o) => {
+              const on = selected.includes(o.id);
               return (
-                <li key={r.id}>
+                <li key={o.id}>
                   <button
                     type="button"
                     role="option"
                     aria-selected={on}
-                    onClick={() => toggle(r.id)}
+                    onClick={() => toggle(o.id)}
                     className="flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm transition hover:bg-white/[0.05]"
                   >
                     <span
@@ -251,8 +277,13 @@ function RacePicker({
                         </svg>
                       )}
                     </span>
-                    <span className="w-14 shrink-0 font-bold text-lime-400">{shortDate(r.date)}</span>
-                    <span className={`truncate ${on ? "text-white" : "text-neutral-400"}`}>{r.name}</span>
+                    {o.tag && <span className="w-14 shrink-0 font-bold text-lime-400">{o.tag}</span>}
+                    <span className={`min-w-0 truncate ${on ? "font-semibold text-white" : "text-neutral-400"}`}>{o.primary}</span>
+                    {o.secondary && (
+                      <span className="ml-auto shrink-0 text-[11px] font-bold uppercase tracking-wider text-neutral-500">
+                        {o.secondary}
+                      </span>
+                    )}
                   </button>
                 </li>
               );
