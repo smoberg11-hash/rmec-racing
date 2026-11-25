@@ -219,7 +219,7 @@ function ResultsLoading() {
 
 export default function ResultsPage() {
   return (
-    <main className="min-h-screen bg-[#101211] text-white">
+    <main className="w-full flex-1 bg-[#101211] text-white">
       <section className="mx-auto max-w-7xl px-6 py-16 md:py-20">
         <p className="text-sm font-bold uppercase tracking-[0.25em] text-lime-400">
           Rocky Mountain Enduro Circuit

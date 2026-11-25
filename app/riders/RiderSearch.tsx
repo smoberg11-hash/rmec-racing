@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useDeferredValue, useMemo, useState } from "react";
+import { inputClassName } from "@/components/ui";
 
 type Rider = {
   id: string;
@@ -62,18 +63,18 @@ export default function RiderSearch({ riders }: { riders: Rider[] }) {
           placeholder="Start typing a rider name or number…"
           autoComplete="off"
           autoFocus
-          className="w-full rounded-lg border border-gray-300 px-4 py-3 text-lg shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+          className={`${inputClassName} py-4 text-lg`}
         />
       </div>
 
-      <p className="mb-4 text-sm text-gray-500" aria-live="polite">
+      <p className="mb-4 text-xs font-bold uppercase tracking-[0.2em] text-neutral-500" aria-live="polite">
         {query.trim()
           ? `${matches.length} of ${riders.length} riders match “${query.trim()}”`
           : `${riders.length} riders`}
       </p>
 
       {matches.length === 0 ? (
-        <p className="rounded-lg border p-6 text-center text-gray-500">
+        <p className="rounded-2xl border border-white/10 bg-[#141816] p-8 text-center text-neutral-400">
           No riders match “{query.trim()}”.
         </p>
       ) : (
@@ -82,17 +83,17 @@ export default function RiderSearch({ riders }: { riders: Rider[] }) {
             <Link
               key={rider.id}
               href={`/riders/${rider.id}`}
-              className="flex items-center justify-between gap-4 rounded-lg border p-4 transition hover:border-blue-300 hover:bg-gray-50"
+              className="group flex items-center justify-between gap-4 rounded-2xl border border-white/10 bg-[#141816] p-4 transition hover:-translate-y-0.5 hover:border-lime-400/60 hover:bg-[#18201b]"
             >
               <div className="min-w-0">
-                <h2 className="truncate font-semibold">
+                <h2 className="truncate font-bold text-white group-hover:text-lime-300">
                   {rider.full_name || "Unknown Rider"}
                 </h2>
                 {rider.rider_number != null && rider.rider_number !== "" && (
-                  <p className="mt-1 text-sm text-gray-500">Rider #{rider.rider_number}</p>
+                  <p className="mt-1 text-sm text-neutral-500">#{rider.rider_number}</p>
                 )}
               </div>
-              <span className="shrink-0 text-sm font-medium text-blue-600">View Stats →</span>
+              <span className="shrink-0 text-xs font-bold uppercase tracking-wide text-lime-400 transition group-hover:translate-x-0.5">Stats →</span>
             </Link>
           ))}
         </div>

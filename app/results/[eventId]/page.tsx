@@ -1,4 +1,4 @@
-import Link from "next/link";
+import { ButtonLink } from "@/components/ui";
 import { notFound } from "next/navigation";
 import { selectPublicRows } from "@/lib/supabase/data";
 import ResultsFilters from "./ResultsFilters";
@@ -176,15 +176,13 @@ export default async function EventResultsPage({ params }: PageProps) {
     : null;
 
   return (
-    <main className="min-h-screen bg-[#0b0d0c] text-white">
+    <main className="w-full flex-1 bg-[#101211] text-white">
       <div className="mx-auto max-w-7xl px-4 py-8 md:px-8 md:py-12">
-        <Link
-          href="/results"
-          className="mb-6 inline-flex items-center gap-2 text-sm font-medium text-neutral-400 transition hover:text-lime-300"
-        >
-          <span aria-hidden="true">←</span>
-          All results
-        </Link>
+        <div className="mb-8">
+          <ButtonLink href="/results" back>
+            All results
+          </ButtonLink>
+        </div>
 
         <header className="mb-8 border-b border-white/10 pb-8">
           <p className="mb-3 text-xs font-bold uppercase tracking-[0.2em] text-lime-400">
@@ -216,7 +214,7 @@ export default async function EventResultsPage({ params }: PageProps) {
             </p>
           </div>
         ) : (
-          <section className="overflow-hidden rounded-xl border border-white/10 bg-[#111412]">
+          <section className="overflow-hidden rounded-xl border border-white/10 bg-[#141816]">
             <div className="border-b border-white/10 p-5">
               <h2 className="text-lg font-bold">Results</h2>
               <p className="mt-1 text-sm text-neutral-400">

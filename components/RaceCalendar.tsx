@@ -119,15 +119,13 @@ export default function RaceCalendar({ events }: RaceCalendarProps) {
     return grouped;
   }, [events]);
 
-  const monthEvents = useMemo(() => {
-    return events
-      .filter(
-        (event) =>
-          event.race_date &&
-          getMonthKey(event.race_date) === displayedMonth
-      )
-      .sort((a, b) => a.race_date.localeCompare(b.race_date));
-  }, [events, displayedMonth]);
+  const monthEvents = events
+    .filter(
+      (event) =>
+        event.race_date &&
+        getMonthKey(event.race_date) === displayedMonth
+    )
+    .sort((a, b) => a.race_date.localeCompare(b.race_date));
 
   function changeMonth(direction: -1 | 1) {
     const nextDate = new Date(

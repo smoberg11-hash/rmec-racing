@@ -1,5 +1,7 @@
 "use client";
 
+import { SelectField, inputClassName } from "@/components/ui";
+
 import { useMemo, useState } from "react";
 
 type Result = {
@@ -99,7 +101,7 @@ export default function ResultsFilters({
         <div className="min-w-[220px] flex-1">
           <label
             htmlFor="rider-search"
-            className="mb-2 block text-xs font-bold uppercase tracking-wider text-neutral-400"
+            className="mb-2 block text-[11px] font-bold uppercase tracking-[0.2em] text-neutral-400"
           >
             Search rider
           </label>
@@ -110,25 +112,13 @@ export default function ResultsFilters({
             value={search}
             onChange={(event) => setSearch(event.target.value)}
             placeholder="Enter rider name or number..."
-            className="w-full rounded-lg border border-white/10 bg-[#171a18] px-4 py-3 text-sm text-white outline-none transition placeholder:text-neutral-500 focus:border-lime-400"
+            className={inputClassName}
           />
         </div>
 
         {/* Class filter */}
         <div className="w-full md:w-56">
-          <label
-            htmlFor="class-filter"
-            className="mb-2 block text-xs font-bold uppercase tracking-wider text-neutral-400"
-          >
-            Filter by class
-          </label>
-
-          <select
-            id="class-filter"
-            value={selectedClass}
-            onChange={(event) => setSelectedClass(event.target.value)}
-            className="w-full rounded-lg border border-white/10 bg-[#171a18] px-4 py-3 text-sm text-white outline-none transition focus:border-lime-400"
-          >
+          <SelectField id="class-filter" label="Filter by class" value={selectedClass} onChange={(event) => setSelectedClass(event.target.value)}>
             <option value="all">All classes</option>
 
             {classes.map((raceClass) => (
@@ -136,24 +126,12 @@ export default function ResultsFilters({
                 {raceClass.name}
               </option>
             ))}
-          </select>
+          </SelectField>
         </div>
 
         {/* Division filter */}
         <div className="w-full md:w-56">
-          <label
-            htmlFor="division-filter"
-            className="mb-2 block text-xs font-bold uppercase tracking-wider text-neutral-400"
-          >
-            Filter by division
-          </label>
-
-          <select
-            id="division-filter"
-            value={selectedDivision}
-            onChange={(event) => setSelectedDivision(event.target.value)}
-            className="w-full rounded-lg border border-white/10 bg-[#171a18] px-4 py-3 text-sm text-white outline-none transition focus:border-lime-400"
-          >
+          <SelectField id="division-filter" label="Filter by division" value={selectedDivision} onChange={(event) => setSelectedDivision(event.target.value)}>
             <option value="all">All divisions</option>
 
             {divisions.map((division) => (
@@ -161,7 +139,7 @@ export default function ResultsFilters({
                 {division.name}
               </option>
             ))}
-          </select>
+          </SelectField>
         </div>
 
         {/* Clear filters */}
@@ -169,7 +147,7 @@ export default function ResultsFilters({
           type="button"
           onClick={clearFilters}
           disabled={!hasActiveFilters}
-          className="rounded-lg border border-white/15 px-4 py-3 text-sm font-bold text-neutral-300 transition hover:border-lime-400 hover:text-lime-300 disabled:cursor-not-allowed disabled:opacity-40"
+          className="rounded-full border border-white/15 bg-white/[0.04] px-5 py-3 text-sm font-bold uppercase tracking-wide text-neutral-300 transition hover:border-lime-400/70 hover:text-lime-300 disabled:cursor-not-allowed disabled:opacity-40"
         >
           Clear filters
         </button>

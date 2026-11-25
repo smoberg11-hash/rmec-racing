@@ -21,12 +21,16 @@ export type StandingsDivision = {
 
 type Season = { id: string; year: number; name: string | null };
 type Series = { id: string; season_id: string; name: string };
-type EventRow = { id: string };
+type EventRow = { id: string; name: string; race_date: string | null };
+
+export type SeasonRace = { id: string; name: string; date: string | null };
 type Member = { id: string; full_name: string; rider_number: string | null };
 
 export type SeasonStandings = {
   season: Season;
   eventCount: number;
+  /** Races this season with results in these classes, oldest first. */
+  races: SeasonRace[];
   memberCount: number;
   classes: StandingsClass[];
   divisions: StandingsDivision[];
@@ -101,8 +105,10 @@ export async function loadSeasonStandings(
           .sort((a, b) => a.display_order - b.display_order || a.name.localeCompare(b.name))
       : [];
 
-  const eventsRes = await selectPublicRows<EventRow>("events", "id", {
+  const eventsRes = await selectPublicRows<EventRow>("events", "id, name, race_date", {
     equals: { column: "season_id", value: season.id },
+    orderBy: "race_date",
+    ascending: true,
   });
   if (eventsRes.error) return { data: null, error: "Unable to load season events." };
   const eventIds = (eventsRes.data ?? []).map((e) => e.id);
@@ -116,6 +122,10 @@ export async function loadSeasonStandings(
 
   const classIds = new Set(classes.map((c) => c.id));
   const results = (resultsRes.data ?? []).filter((r) => classIds.has(r.class_id));
+  const raced = new Set(results.map((r) => r.event_id));
+  const races = (eventsRes.data ?? [])
+    .filter((e) => raced.has(e.id))
+    .map((e) => ({ id: e.id, name: e.name, date: e.race_date }));
   const members = membersRes.data ?? [];
 
   const { byClass, byDivision } = buildStandings({
@@ -128,7 +138,8 @@ export async function loadSeasonStandings(
   return {
     data: {
       season,
-      eventCount: eventIds.length,
+      eventCount: races.length,
+      races,
       memberCount: members.length,
       classes,
       divisions,

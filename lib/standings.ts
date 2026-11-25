@@ -8,6 +8,8 @@
  *   division points in that division at an event). Riders still level share
  *   the same rank.
  * - DNS / DNF / disqualified results never count as wins.
+ * - Each standing also carries a per-race breakdown (points, place, status) so
+ *   the page can show every race and filter to one race.
  */
 
 export type StandingResult = {
@@ -33,6 +35,14 @@ export type StandingClass = {
   division_id: string | null;
 };
 
+/** One rider's result at one race, as shown in a standings column. */
+export type RaceResult = {
+  points: number;
+  /** Class place for class standings; place within the division for division standings. */
+  place: number | null;
+  status: "DNS" | "DNF" | "DQ" | null;
+};
+
 export type Standing = {
   riderId: string;
   riderName: string;
@@ -41,12 +51,20 @@ export type Standing = {
   events: number;
   wins: number;
   rank: number;
+  races: Record<string, RaceResult>;
 };
 
 type Tally = Omit<Standing, "rank">;
 
 function finished(result: StandingResult) {
   return !result.dns && !result.dnf && !result.disqualified;
+}
+
+function status(result: StandingResult): RaceResult["status"] {
+  if (result.disqualified) return "DQ";
+  if (result.dnf) return "DNF";
+  if (result.dns) return "DNS";
+  return null;
 }
 
 /** Sort by points, then wins; equal points and wins share a rank. */
@@ -83,31 +101,32 @@ export function buildStandings({
 }) {
   const membersById = new Map(members.map((m) => [m.id, m]));
   const classesById = new Map(classes.map((c) => [c.id, c]));
+  const divisionOf = (r: StandingResult) => {
+    const d = classesById.get(r.class_id)?.division_id;
+    return d && annualDivisionIds.has(d) ? d : null;
+  };
 
-  // Division winner at each event = most division points in that division
-  // (everyone counts here, members or not, so a non-member win isn't handed
-  // to the next member).
-  const divisionWinners = new Map<string, { riderId: string; points: number }>();
-  for (const result of results) {
-    const division = classesById.get(result.class_id)?.division_id;
-    if (!division || !annualDivisionIds.has(division) || !finished(result)) continue;
-    const points = result.division_points ?? 0;
-    if (points <= 0) continue;
-    const key = `${result.event_id}|${division}`;
-    const best = divisionWinners.get(key);
-    if (!best || points > best.points) {
-      divisionWinners.set(key, { riderId: result.rider_id, points });
+  // Place within the division at each event, from division points (everyone
+  // counts here, members or not). Riders with no division points get no place.
+  const divisionPlace = new Map<StandingResult, number>();
+  const byEventDivision = new Map<string, StandingResult[]>();
+  for (const r of results) {
+    const d = divisionOf(r);
+    if (!d || !finished(r) || (r.division_points ?? 0) <= 0) continue;
+    const key = `${r.event_id}|${d}`;
+    if (!byEventDivision.has(key)) byEventDivision.set(key, []);
+    byEventDivision.get(key)!.push(r);
+  }
+  for (const group of byEventDivision.values()) {
+    for (const r of group) {
+      divisionPlace.set(r, 1 + group.filter((o) => (o.division_points ?? 0) > (r.division_points ?? 0)).length);
     }
   }
 
   const byClass = new Map<string, Map<string, Tally>>();
   const byDivision = new Map<string, Map<string, Tally>>();
 
-  function tallyFor(
-    groups: Map<string, Map<string, Tally>>,
-    groupId: string,
-    member: StandingRider,
-  ) {
+  function tallyFor(groups: Map<string, Map<string, Tally>>, groupId: string, member: StandingRider) {
     if (!groups.has(groupId)) groups.set(groupId, new Map());
     const group = groups.get(groupId)!;
     let tally = group.get(member.id);
@@ -119,6 +138,7 @@ export function buildStandings({
         points: 0,
         events: 0,
         wins: 0,
+        races: {},
       };
       group.set(member.id, tally);
     }
@@ -135,14 +155,27 @@ export function buildStandings({
     classTally.points += result.points ?? 0;
     classTally.events += 1;
     if (finished(result) && result.position === 1) classTally.wins += 1;
+    classTally.races[result.event_id] = {
+      points: result.points ?? 0,
+      place: finished(result) ? result.position : null,
+      status: status(result),
+    };
 
-    const division = raceClass.division_id;
-    if (division && annualDivisionIds.has(division)) {
+    const division = divisionOf(result);
+    if (division) {
       const divisionTally = tallyFor(byDivision, division, member);
+      const place = divisionPlace.get(result) ?? null;
       divisionTally.points += result.division_points ?? 0;
       divisionTally.events += 1;
-      if (divisionWinners.get(`${result.event_id}|${division}`)?.riderId === member.id) {
-        divisionTally.wins += 1;
+      if (place === 1) divisionTally.wins += 1;
+      // A rider in two classes of one division at the same race keeps the better result.
+      const previous = divisionTally.races[result.event_id];
+      if (!previous || (result.division_points ?? 0) > previous.points) {
+        divisionTally.races[result.event_id] = {
+          points: result.division_points ?? 0,
+          place,
+          status: status(result),
+        };
       }
     }
   }

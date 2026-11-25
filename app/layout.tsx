@@ -20,7 +20,7 @@ type LayoutProps = {
 export default function RootLayout({ children }: LayoutProps) {
   return (
     <html lang="en" className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
-      <body className="min-h-screen flex flex-col">
+      <body className="flex min-h-screen flex-col bg-[#101211] text-white">
         <SiteHeader />
         {children}
       </body>

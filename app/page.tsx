@@ -159,7 +159,7 @@ async function LatestRaces() {
 
 export default function HomePage() {
   return (
-    <main className="min-h-screen bg-[#0b0e0c] text-white">
+    <main className="w-full flex-1 bg-[#101211] text-white">
       {/* Hero */}
       <section className="relative overflow-hidden border-b border-white/10">
         <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,rgba(163,230,53,0.12),transparent_55%)]" />

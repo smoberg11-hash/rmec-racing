@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Suspense } from "react";
 import { notFound } from "next/navigation";
 import { selectPublicRows } from "@/lib/supabase/data";
+import { ButtonLink, Page, SelectField } from "@/components/ui";
 
 type Rider = {
   id: string;
@@ -42,7 +43,7 @@ type Result = {
 };
 
 function LoadingStats() {
-  return <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-8 text-gray-500 sm:px-6">Loading rider stats...</main>;
+  return <Page><p className="text-neutral-400">Loading rider stats...</p></Page>;
 }
 
 export default async function RiderStatsPage({
@@ -102,16 +103,16 @@ async function RiderStatsContent({
     !Array.isArray(resultsResponse.data)
   ) {
     return (
-      <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-8 sm:px-6">
-        <Link href="/riders" className="text-blue-600 hover:underline">
-          ← All Riders
-        </Link>
-        <h1 className="mt-4 text-2xl font-bold">Unable to load rider stats</h1>
-        <p className="mt-2 text-gray-600">
+      <Page>
+        <ButtonLink href="/riders" back>
+          All riders
+        </ButtonLink>
+        <h1 className="mt-6 text-2xl font-black uppercase">Unable to load rider stats</h1>
+        <p className="mt-2 text-neutral-400">
           Please try again later. If the problem continues, check the server
           logs for the Supabase query error.
         </p>
-      </main>
+      </Page>
     );
   }
 
@@ -196,44 +197,37 @@ async function RiderStatsContent({
   const eventCount = new Set(riderResults.map((result) => result.event_id)).size;
 
   return (
-    <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-8 sm:px-6">
-      <Link href="/riders" className="text-sm text-blue-600 hover:underline">
-        ← All Riders
-      </Link>
+    <Page>
+      <ButtonLink href="/riders" back>
+        All riders
+      </ButtonLink>
 
-      <div className="mt-4 flex flex-wrap items-start justify-between gap-4">
+      <div className="mt-8 flex flex-wrap items-end justify-between gap-6 border-b border-white/10 pb-8">
         <div>
-          <h1 className="text-3xl font-bold">
+          <p className="mb-3 text-xs font-bold uppercase tracking-[0.25em] text-lime-400">Rider stats</p>
+          <h1 className="text-4xl font-black uppercase tracking-tight md:text-5xl">
             {rider.full_name || "Unknown Rider"}
           </h1>
           {rider.rider_number != null && (
-            <p className="mt-2 text-gray-500">
-              Rider #{rider.rider_number}
+            <p className="mt-3 inline-flex rounded-full border border-white/15 px-3 py-1 text-sm font-bold text-neutral-300">
+              #{rider.rider_number}
             </p>
           )}
         </div>
 
-        <form action="" method="GET" className="flex items-center gap-2">
-          <label htmlFor="season" className="text-sm font-medium">
-            Season
-          </label>
-          <select
-            id="season"
-            name="season"
-            defaultValue={selectedSeason?.year ?? ""}
-            className="rounded-lg border border-gray-300 bg-white px-3 py-2"
-          >
+        <form action="" method="GET" className="flex items-end gap-2">
+          <SelectField id="season" name="season" label="Season" defaultValue={selectedSeason?.year ?? ""} className="w-36">
             {seasons.map((season) => (
               <option key={season.id} value={season.year}>
                 {season.year}
               </option>
             ))}
-          </select>
+          </SelectField>
           <button
             type="submit"
-            className="rounded-lg bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700"
+            className="rounded-xl bg-lime-400 px-4 py-3 text-sm font-bold uppercase tracking-wide text-[#101211] transition hover:bg-lime-300"
           >
-            Go
+            Show
           </button>
         </form>
       </div>
@@ -248,16 +242,16 @@ async function RiderStatsContent({
       </section>
 
       <section>
-        <h2 className="mb-4 text-xl font-bold">Race History</h2>
+        <h2 className="mb-4 text-xl font-black uppercase tracking-tight">Race History</h2>
 
         {riderResults.length === 0 ? (
-          <p className="rounded-lg border p-6 text-center text-gray-500">
+          <p className="rounded-2xl border border-white/10 bg-[#141816] p-8 text-center text-neutral-400">
             No results found for this season.
           </p>
         ) : (
-          <div className="overflow-x-auto rounded-lg border">
+          <div className="overflow-x-auto rounded-2xl border border-white/10 bg-[#141816]">
             <table className="w-full min-w-[760px] text-left text-sm">
-              <thead className="bg-gray-50">
+              <thead className="border-b border-white/10 text-[11px] uppercase tracking-[0.15em] text-neutral-400">
                 <tr>
                   <th className="p-3">Date</th>
                   <th className="p-3">Event</th>
@@ -282,7 +276,7 @@ async function RiderStatsContent({
                         : null;
 
                   return (
-                    <tr key={result.id} className="border-t">
+                    <tr key={result.id} className="border-t border-white/5 transition hover:bg-white/[0.02]">
                       <td className="whitespace-nowrap p-3">
                         {event?.race_date
                           ? new Date(
@@ -294,7 +288,7 @@ async function RiderStatsContent({
                         {event ? (
                           <Link
                             href={`/results/${event.id}`}
-                            className="font-medium text-blue-600 hover:underline"
+                            className="font-bold text-white transition hover:text-lime-300"
                           >
                             {event.name}
                           </Link>
@@ -326,10 +320,10 @@ async function RiderStatsContent({
         )}
       </section>
 
-      <p className="mt-4 text-sm text-gray-500">
+      <p className="mt-4 text-sm text-neutral-500">
         Best class finish this season: {bestFinish}
       </p>
-    </main>
+    </Page>
   );
 }
 
@@ -341,9 +335,9 @@ function StatCard({
   value: string | number;
 }) {
   return (
-    <div className="rounded-lg border p-4">
-      <p className="text-sm text-gray-500">{label}</p>
-      <p className="mt-2 text-2xl font-bold">{value}</p>
+    <div className="rounded-2xl border border-white/10 bg-[#141816] p-5">
+      <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-neutral-400">{label}</p>
+      <p className="mt-2 text-3xl font-black text-lime-400">{value}</p>
     </div>
   );
 }

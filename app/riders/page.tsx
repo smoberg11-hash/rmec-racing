@@ -1,6 +1,6 @@
-import Link from "next/link";
 import { Suspense } from "react";
 import { selectPublicRows } from "@/lib/supabase/data";
+import { ButtonLink, Page, PageHeader } from "@/components/ui";
 import RiderSearch from "./RiderSearch";
 
 export const metadata = {
@@ -15,26 +15,26 @@ type Rider = {
 };
 
 function RidersLoading() {
-  return <p className="text-gray-500">Loading riders...</p>;
+  return <div className="h-16 animate-pulse rounded-xl border border-white/10 bg-white/[0.03]" />;
 }
 
 export default function RidersPage() {
   return (
-    <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-8 sm:px-6">
-      <Link href="/" className="text-sm text-blue-600 hover:underline">
-        ← Home
-      </Link>
-
-      <h1 className="mt-4 text-3xl font-bold">Rider Stats</h1>
-
-      <p className="mt-2 text-gray-600">
-        Search riders to explore their race history and statistics.
-      </p>
-
+    <Page>
+      <PageHeader
+        eyebrow="Riders"
+        title="Rider Stats"
+        description="Start typing a name or number to find a rider, then open their race history and season stats."
+        actions={
+          <ButtonLink href="/" back>
+            Home
+          </ButtonLink>
+        }
+      />
       <Suspense fallback={<RidersLoading />}>
         <RidersContent />
       </Suspense>
-    </main>
+    </Page>
   );
 }
 
@@ -45,7 +45,7 @@ async function RidersContent() {
   });
 
   if (result.error || !Array.isArray(result.data)) {
-    return <p className="mt-4 text-red-600">Unable to load riders. Please try again later.</p>;
+    return <p className="text-red-300">Unable to load riders. Please try again later.</p>;
   }
 
   return <RiderSearch riders={result.data} />;
