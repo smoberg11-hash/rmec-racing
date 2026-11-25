@@ -1,6 +1,6 @@
-results_name,rider_name,note
-Dave Bower,David Bower,MotoTally Black Hills Sprint Enduro
-Zachary Stubbe,Zach Stubbe,MotoTally Black Hills Sprint Enduro
-Jarrett Menefee,Jarett Menefee,MotoTally Black Hills Sprint Enduro
-Greg Gibson,Gregory Gibson,MotoTally Black Hills Sprint Enduro
-Jon Coln,Jonathan Coln,MotoTally Black Hills Sprint Enduro
+results_name,rider_name,rider_id,note
+Dave Bower,David Bower,,MotoTally Black Hills Sprint Enduro
+Zachary Stubbe,Zach Stubbe,,MotoTally Black Hills Sprint Enduro
+Jarrett Menefee,Jarett Menefee,,MotoTally Black Hills Sprint Enduro
+Greg Gibson,Gregory Gibson,,MotoTally Black Hills Sprint Enduro
+Jon Coln,Jonathan Coln,,MotoTally Black Hills Sprint Enduro

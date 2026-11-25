@@ -199,3 +199,19 @@ class RiderAliases(unittest.TestCase):
         finally:
             os.unlink(f.name)
         self.assertEqual(ids, {("name", "seth hilman"): "seth"})
+
+
+class AliasToRiderId(unittest.TestCase):
+    def test_alias_can_pick_one_of_two_same_name_riders(self):
+        import tempfile
+        with tempfile.NamedTemporaryFile("w", suffix=".csv", delete=False) as f:
+            f.write("results_name,rider_name,rider_id,note\nRori Dyar,,kid-account,\n")
+        store = NameStore([{"id": "parent-account", "full_name": "Rori Dyar", "livelaps_id": 1},
+                           {"id": "kid-account", "full_name": "Rori Dyar", "livelaps_id": 2}], [])
+        named = {("name", "rori dyar"): {"full_name": "Rori Dyar", "first_name": "Rori", "last_name": "Dyar"}}
+        try:
+            with mock.patch.object(pipeline, "RIDER_ALIASES_FILE", f.name):
+                ids = pipeline.match_named_riders(store, named, log=lambda *_: None)
+        finally:
+            os.unlink(f.name)
+        self.assertEqual(ids, {("name", "rori dyar"): "kid-account"})

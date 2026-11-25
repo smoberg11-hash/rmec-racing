@@ -208,7 +208,8 @@ def load_rider_aliases(path: str | None = None) -> dict:
     if os.path.exists(path):
         with open(path, newline="", encoding="utf-8-sig") as f:
             for row in csv.DictReader(f):
-                a, b = normalize(row.get("results_name")), normalize(row.get("rider_name"))
+                a = normalize(row.get("results_name"))
+                b = (row.get("rider_id") or "").strip() or normalize(row.get("rider_name"))
                 if a and b:
                     out[a] = b
     return out
@@ -230,18 +231,27 @@ def match_named_riders(store, named: dict, log=print) -> dict:
             by_last.setdefault(normalize(r["last_name"]), []).append(r)
 
     aliases = load_rider_aliases()
+    by_id = {rid: r for group in by_name.values() for rid, r in group.items()}
     ids, new, clashes = {}, [], []
     for key, row in named.items():
-        found = list(by_name.get(aliases.get(key[1], key[1]), {}).values())
+        target = aliases.get(key[1], key[1])
+        if target in by_id:           # the sheet names a specific rider id
+            ids[key] = target
+            continue
+        found = list(by_name.get(target, {}).values())
         if len(found) == 1:
             ids[key] = found[0]["id"]
         elif len(found) > 1:
-            clashes.append(f"{row['full_name']} ({len(found)} riders have this name)")
+            clashes.append(f"{row['full_name']} ({len(found)} riders have this name: "
+                           + ", ".join(f"{r['id']}" + (f" LiveLaps {r['livelaps_id']}" if r.get('livelaps_id') else "")
+                                       for r in found) + ")")
         else:
             new.append((key, row))
     if clashes:
-        raise EventImportError("Can't tell these riders apart by name; fix the duplicate riders in Supabase "
-                               "(or rename one) and run again: " + "; ".join(clashes))
+        raise EventImportError(
+            "Can't tell these riders apart by name. Run `python3 -m importer.merge_riders` first; if they're "
+            "still listed (two LiveLaps accounts for one person), add a row to importer/rider_aliases.csv with "
+            "the name and the rider_id to use:\n    " + "\n    ".join(clashes))
 
     log(f"Riders matched by name: {len(ids)} already in database, {len(new)} new")
     for key, row in new:
