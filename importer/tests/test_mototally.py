@@ -162,3 +162,25 @@ class CombiningJuniorClasses(unittest.TestCase):
         with self.assertRaises(pipeline.EventImportError) as ctx:
             pipeline.rerank_merged_classes(raw, rows, log=lambda *_: None)
         self.assertIn("different results links", str(ctx.exception))
+
+
+class RealPages(unittest.TestCase):
+    """Pages exactly as MotoTally sent them (with its `</span</td>` typo)."""
+
+    def test_enduro_pro(self):
+        rows = mototally.parse_class_page(page("mototally_real_2026_4_C1.html"), "Pro", source="x", key_prefix="k")
+        self.assertEqual(len(rows), 16)
+        self.assertEqual((rows[0]["fullName"], rows[0]["classPosition"], rows[0]["brand"], rows[0]["source_key"]),
+                         ("Chase Lorenz", 1, "KAW", "k/r6036"))
+        self.assertEqual(rows[-1]["standing"], "DNF")
+
+    def test_junior_hare_scramble(self):
+        rows = mototally.parse_class_page(page("mototally_real_2026_3_C125.html"), "Supermini", source="x", key_prefix="k")
+        self.assertEqual([(r["fullName"], r["groupPosition"]) for r in rows],
+                         [("Oliver Roths", 1), ("Wyatt Roths", 2), ("Isaac Wills", 13)])
+
+    def test_plain_header_layout(self):
+        rows = mototally.parse_class_page(page("mototally_real_2026_12_C112.html"), "VINTAGE EXP", source="x", key_prefix="k")
+        self.assertEqual(len(rows), 1)
+        self.assertEqual((rows[0]["classPosition"], rows[0]["groupPosition"], rows[0]["classGroup"], rows[0]["displayedNumber"]),
+                         (1, 4, "Overall group 13", "377"))

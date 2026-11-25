@@ -67,7 +67,11 @@ class _PageParser(HTMLParser):
         elif tag == "tr" and self._stack:
             self._stack[-1]["row"] = []
         elif tag in ("td", "th") and self._stack and self._stack[-1]["row"] is not None:
-            self._stack[-1]["cell"], self._stack[-1]["tag"] = [], tag
+            self._stack[-1]["cell"], self._stack[-1]["tag"], self._stack[-1]["rid"] = [], tag, None
+        elif tag == "a" and self._stack and self._stack[-1]["cell"] is not None:
+            m = re.search(r"getRiderDetail\((\d+)\)", a.get("href") or "")
+            if m:
+                self._stack[-1]["rid"] = m.group(1)
         elif tag == "br" and self._stack and self._stack[-1]["cell"] is not None:
             self._stack[-1]["cell"].append(" ")
 
@@ -84,7 +88,7 @@ class _PageParser(HTMLParser):
         elif tag in ("td", "th") and self._stack and self._stack[-1]["cell"] is not None:
             top = self._stack[-1]
             if top["row"] is not None:
-                top["row"].append((top["tag"], " ".join("".join(top["cell"]).replace("\xa0", " ").split())))
+                top["row"].append((top["tag"], " ".join("".join(top["cell"]).replace("\xa0", " ").split()), top.get("rid")))
             top["cell"] = None
         elif tag == "tr" and self._stack and self._stack[-1]["row"] is not None:
             top = self._stack[-1]
@@ -100,9 +104,15 @@ class _PageParser(HTMLParser):
             self._stack[-1]["cell"].append(data)
 
 
+def repair_html(text: str) -> str:
+    """MotoTally writes the brand cell as `<span ...>KAW</span</td>` (missing '>').
+    Browsers recover; Python's parser doesn't, so close any such end tag."""
+    return re.sub(r"</([a-zA-Z][a-zA-Z0-9]*)<", r"</\1><", text)
+
+
 def parse_page(text: str) -> _PageParser:
     p = _PageParser()
-    p.feed(text)
+    p.feed(repair_html(text))
     return p
 
 
@@ -134,14 +144,22 @@ def parse_class_page(text: str, class_name: str, *, source: str, key_prefix: str
 
     header = next(row for row in table if any(c[1] == "Rider Name" for c in row))
     group_label = header[0][1] if header else ""
-    group = re.sub(r"\s*Results$", "", group_label).strip() if group_label.lower().startswith("overall") else None
-    names = [c[1] for c in header[2:]]   # columns after the two place/points groups
+    if group_label.lower().startswith("oaplace"):
+        # Plain layout: OAPlace13 | OASPlace13 | OAPoints13 | CPlace | CSPlace | CPoints | Rider Name | ...
+        # (an overall group with no display name; "13" is MotoTally's group number)
+        group = "Overall group " + (re.sub(r"\D", "", group_label) or "?")
+        names = [c[1] for c in header[6:]]
+    else:
+        # Grouped layout: "Overall A/B Results" | "<class> Results" | Rider Name | ...
+        group = re.sub(r"\s*Results$", "", group_label).strip() if group_label.lower().startswith("overall") else None
+        names = [c[1] for c in header[2:]]
 
     results = []
     for row in table:
-        if any(tag != "td" for tag, _ in row) or len(row) != 6 + len(names):
+        if any(c[0] != "td" for c in row) or len(row) != 6 + len(names):
             continue
-        cells = [v for _, v in row]
+        cells = [c[1] for c in row]
+        rider_mt_id = next((c[2] for c in row if c[2]), None)
         extra = dict(zip(names, cells[6:]))
         full = clean_name(extra.get("Rider Name", ""))
         if not full:
@@ -154,7 +172,10 @@ def parse_class_page(text: str, class_name: str, *, source: str, key_prefix: str
         number = extra.get("Rider#") or None
         results.append({
             "id": None,
-            "source_key": f"{key_prefix}/{re.sub(r'[^a-z0-9]+', '-', full.lower()).strip('-')}",
+            # MotoTally's own rider id when the name links to one; otherwise the name.
+            "source_key": f"{key_prefix}/" + (f"r{rider_mt_id}" if rider_mt_id else
+                                               re.sub(r'[^a-z0-9]+', '-', full.lower()).strip('-')),
+            "mototally_rider_id": rider_mt_id,
             "userId": None,
             "firstName": first,
             "lastName": last,
