@@ -534,7 +534,10 @@ class LiveStore:
         return saved
 
     def riders_for_name_matching(self):
-        return self.db.select("riders", {"select": "id,full_name,first_name,last_name"})
+        return self.db.select("riders", {"select": "id,full_name,first_name,last_name,livelaps_id"})
+
+    def set_livelaps_id(self, rider_id, livelaps_id):
+        self.db.update("riders", {"id": f"eq.{rider_id}"}, {"livelaps_id": livelaps_id})
 
     def create_riders(self, rows):
         return self.db.insert("riders", rows)
@@ -656,11 +659,27 @@ def import_event(store, event: dict, log=print, results_file: str | None = None,
     if riders:
         existing = store.riders_by_livelaps_id({r["livelaps_id"] for r in riders})
         new = [r for r in riders if r["livelaps_id"] not in existing]
-        log(f"Riders: {len(riders)} in this race — {len(riders) - len(new)} already in database, {len(new)} new")
+        # A "new" LiveLaps rider may already exist from a MotoTally race (same name, no
+        # LiveLaps id yet). Attach the LiveLaps id to that rider instead of creating a twin.
+        adopt = {}
+        if new and hasattr(store, "riders_for_name_matching"):
+            no_id: dict = {}
+            for r in store.riders_for_name_matching():
+                if r.get("livelaps_id") in (None, ""):
+                    no_id.setdefault(normalize(r.get("full_name")), []).append(r["id"])
+            for r in new:
+                found = no_id.get(normalize(r["full_name"]), [])
+                if len(found) == 1:
+                    adopt[r["livelaps_id"]] = found[0]
+        log(f"Riders: {len(riders)} in this race — {len(riders) - len(new)} already in database, "
+            f"{len(adopt)} linked by name to riders from other results sites, {len(new) - len(adopt)} new")
         if store.dry_run:
             rider_ids.update({("ll", k): v for k, v in existing.items()})
-            rider_ids.update({("ll", r["livelaps_id"]): f"NEW-{r['livelaps_id']}" for r in new})
+            rider_ids.update({("ll", k): v for k, v in adopt.items()})
+            rider_ids.update({("ll", r["livelaps_id"]): f"NEW-{r['livelaps_id']}" for r in new if r["livelaps_id"] not in adopt})
         else:
+            for livelaps_id, rider_id in adopt.items():
+                store.set_livelaps_id(rider_id, livelaps_id)
             saved_ll = store.save_riders(riders)
             if len(saved_ll) != len(riders):
                 raise EventImportError(f"Saved {len(saved_ll)} riders but expected {len(riders)}.")

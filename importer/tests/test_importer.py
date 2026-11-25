@@ -392,3 +392,49 @@ class ReplaceAfterLinkChange(unittest.TestCase):
             self.assertEqual([r["livelaps_result_id"] for r in gone.results], [1])
         finally:
             os.unlink(f.name)
+
+
+class DuplicateRiderPrevention(unittest.TestCase):
+    def test_livelaps_rider_adopts_motoTally_twin(self):
+        import tempfile
+
+        class Store(FakeStore):
+            def __init__(self, *a):
+                super().__init__(*a)
+                self.linked = {}
+
+            def riders_by_livelaps_id(self, ids):
+                return {}
+
+            def riders_for_name_matching(self):
+                return [{"id": "mt-rori", "full_name": "Rori Dyar", "livelaps_id": None}]
+
+            def set_livelaps_id(self, rider_id, livelaps_id):
+                self.linked[rider_id] = livelaps_id
+
+            def save_riders(self, rows):
+                return {r["livelaps_id"]: ("mt-rori" if r["livelaps_id"] in self.linked.values()
+                                           else f"rider-{r['livelaps_id']}") for r in rows}
+
+        raw = [{"id": 1, "userId": 555, "fullName": "Rori Dyar", "firstName": "Rori", "lastName": "Dyar",
+                "className": "A Open", "classPosition": 1, "overallPosition": 1, "standing": "Scored"}]
+        store = Store([cls("aopen", "A Open", "A")], [])
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+            json.dump(raw, f)
+        try:
+            pipeline.import_event(store, EVENT_ROW, log=lambda *_: None, results_file=f.name)
+        finally:
+            os.unlink(f.name)
+        self.assertEqual(store.linked, {"mt-rori": 555})
+        self.assertEqual(store.results[0]["rider_id"], "mt-rori")
+
+    def test_merge_plan(self):
+        from importer import merge_riders
+        riders = [{"id": "ll", "full_name": "Rori Dyar", "livelaps_id": 5},
+                  {"id": "mt", "full_name": "rori  dyar", "livelaps_id": None},
+                  {"id": "a", "full_name": "Sam Lee", "livelaps_id": 1},
+                  {"id": "b", "full_name": "Sam Lee", "livelaps_id": 2},
+                  {"id": "solo", "full_name": "Only One", "livelaps_id": None}]
+        merges, unsure = merge_riders.plan(riders)
+        self.assertEqual([(k["id"], [d["id"] for d in ds]) for k, ds in merges], [("ll", ["mt"])])
+        self.assertEqual(unsure, [("Sam Lee", 2)])
