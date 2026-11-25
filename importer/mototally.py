@@ -183,7 +183,13 @@ def parse_class_page(text: str, class_name: str, *, source: str, key_prefix: str
 
     header = next(row for row in table if any(c[1] == "Rider Name" for c in row))
     group_label = header[0][1] if header else ""
-    if group_label.lower().startswith("oaplace"):
+    if group_label.lower().startswith("cplace"):
+        # Plain class-only layout (MotoTally uses it for a class with one rider):
+        # CPlace | CSPlace | CPoints | Rider Name | ...
+        group = None
+        names = [c[1] for c in header[3:]]
+        groups = 1
+    elif group_label.lower().startswith("oaplace"):
         # Plain layout: OAPlace13 | OASPlace13 | OAPoints13 | CPlace | CSPlace | CPoints | Rider Name | ...
         # (an overall group with no display name; "13" is MotoTally's group number)
         # "OAPlace1" is the overall group with code O1 in the class menu, e.g. "Overall A/B".
@@ -252,6 +258,23 @@ def parse_class_page(text: str, class_name: str, *, source: str, key_prefix: str
     return results
 
 
+def overall_places(text: str) -> dict:
+    """{MotoTally rider id: overall place} from an 'Overall …' Summary page (place is the first column)."""
+    page = parse_page(text)
+    out = {}
+    for table in page.tables:
+        if not any(any(c[1] == "Rider Name" for c in row) for row in table):
+            continue
+        for row in table:
+            if not row or any(c[0] != "td" for c in row):
+                continue
+            rid = next((c[2] for c in row if c[2]), None)
+            place = _int(row[0][1])
+            if rid and place:
+                out[rid] = place
+    return out
+
+
 def _get(url: str, retries: int = 3) -> str:
     req = urllib.request.Request(url, headers={
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 "
@@ -274,9 +297,11 @@ def fetch_results(link: str) -> list[dict]:
     series, year, event = parse_link(link)
     base = f"https://www.moto-tally.com/{series}/Results.aspx/{year}/{event}"
     source = f"MotoTally {series} {year}/{event}"
-    classes = class_options(parse_page(_get(base)))
+    page = parse_page(_get(base))
+    classes = class_options(page)
     if not classes:
         raise ValueError(f"No classes found on {base} (results may not be posted yet).")
+    overall_groups = [(code, name) for code, name in page.options if code.upper().startswith("O")]
     results = []
     empty = []
     for code, name in classes:
@@ -286,6 +311,18 @@ def fetch_results(link: str) -> list[dict]:
             empty.append((code, name, text))
         results.extend(rows)
         time.sleep(0.3)  # be polite to their server
+    # Some class pages (e.g. a class with one rider) leave out the overall place. Fill it
+    # in from the race's "Overall …" pages, matched by MotoTally rider id.
+    missing = [r for r in results if r["groupPosition"] is None and r["classPosition"] and r.get("mototally_rider_id")]
+    if missing and overall_groups:
+        for code, name in overall_groups:
+            places = overall_places(_get(f"{base}/{code}/S"))
+            for r in missing:
+                if r["groupPosition"] is None and r["mototally_rider_id"] in places:
+                    r["groupPosition"] = places[r["mototally_rider_id"]]
+                    r["classGroup"] = name
+            time.sleep(0.3)
+
     if empty:
         # Save what MotoTally sent for an empty class so the reader can be fixed if the page changed.
         folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), "debug")

@@ -284,3 +284,24 @@ class CombineByLapsAndTime(unittest.TestCase):
                 for p in (1, 1, 2)]
         pipeline.rerank_merged_classes(raw, rows, log=lambda *_: None)
         self.assertEqual([r["position"] for r in rows], [3, 2, 1])
+
+
+class PlainClassOnlyLayout(unittest.TestCase):
+    def test_single_rider_class_page(self):
+        rows = mototally.parse_class_page(page("mototally_real_IERA_HS_2026_30_C48.html"), "A 250 (RMEC)",
+                                          source="x", key_prefix="k")
+        self.assertEqual([(r["fullName"], r["classPosition"], r["groupPosition"], r["standing"]) for r in rows],
+                         [("Byron Sutter", 1, None, "Scored")])
+
+
+class FillFromOverallPages(unittest.TestCase):
+    def test_single_rider_class_gets_overall_place(self):
+        base = "https://www.moto-tally.com/IERA/HS/Results.aspx/2026/30"
+        index = '<select name="mtR$ddlSelectClass"><option value="O1">Overall A</option><option value="C48">A 250 (RMEC)</option></select>'
+        overall = ('<table><tr><th>Overall A Results</th><th>Class Results</th><th>Class</th><th>Rider Name</th></tr>'
+                   '<tr><td>7</td><td></td><td></td><td>1</td><td></td><td></td><td>A250</td>'
+                   "<td><a href='javascript:getRiderDetail(4877);'>Byron Sutter</a></td></tr></table>")
+        pages = {base: index, base + "/C48/S": page("mototally_real_IERA_HS_2026_30_C48.html"), base + "/O1/S": overall}
+        with mock.patch.object(mototally, "_get", side_effect=lambda url: pages[url]), mock.patch.object(mototally.time, "sleep"):
+            rows = mototally.fetch_results(base)
+        self.assertEqual((rows[0]["fullName"], rows[0]["groupPosition"], rows[0]["classGroup"]), ("Byron Sutter", 7, "Overall A"))
