@@ -127,6 +127,31 @@ class Importing(unittest.TestCase):
         self.assertTrue(out["valid"], out["errors"])
         self.assertEqual([p["points"] for p in out["proposed"]], [30, 25])
 
+    def test_same_rider_twice_in_a_class_stops_the_import(self):
+        match = pipeline.build_class_matcher([cls("a30", "A 30+", "A")], EVENT_ROW, SERIES)
+        raw = [{"id": 4768804, "userId": 452791, "fullName": "Collin Heath", "className": "A 30+", "classPosition": 9},
+               {"id": 4774782, "userId": 452791, "fullName": "Collin Heath", "className": "A 30+", "classPosition": 14}]
+        with self.assertRaises(pipeline.EventImportError) as ctx:
+            pipeline.result_rows(raw, EVENT, {452791: "r1"}, match)
+        self.assertIn("Collin Heath", str(ctx.exception))
+        self.assertIn("listed 2 times", str(ctx.exception))
+
+    def test_empty_duplicate_is_dropped(self):
+        raw = [{"id": 10, "userId": 5, "fullName": "Pat", "className": "A 30+", "sectionsCompleted": 12},
+               {"id": 11, "userId": 5, "fullName": "Pat", "className": "A 30+", "sectionsCompleted": 0},
+               {"id": 12, "userId": 6, "fullName": "Lee", "className": "A 30+", "sectionsCompleted": 12}]
+        kept = pipeline.drop_ignored_and_empty_duplicates(raw, log=lambda *_: None)
+        self.assertEqual([r["id"] for r in kept], [10, 12])
+
+    def test_duplicate_with_scores_on_both_is_kept_for_a_person(self):
+        raw = [{"id": 10, "userId": 5, "className": "A 30+", "sectionsCompleted": 12},
+               {"id": 11, "userId": 5, "className": "A 30+", "sectionsCompleted": 9}]
+        self.assertEqual(len(pipeline.drop_ignored_and_empty_duplicates(raw, log=lambda *_: None)), 2)
+
+    def test_ignore_list(self):
+        raw = [{"id": 4774782, "userId": 452791, "className": "A 30+"}]
+        self.assertEqual(pipeline.drop_ignored_and_empty_duplicates(raw, log=lambda *_: None), [])
+
     def test_unmatched_class_stops_the_import(self):
         match = pipeline.build_class_matcher([cls("aopen", "A Open", "A")], EVENT_ROW, SERIES)
         with self.assertRaises(pipeline.EventImportError) as ctx:

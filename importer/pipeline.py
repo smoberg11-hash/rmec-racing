@@ -48,6 +48,48 @@ def result_status(r: dict) -> dict:
     }
 
 
+# LiveLaps result ids to skip entirely, with a note on why.
+IGNORE_RESULTS = {
+    4774782: "Collin Heath listed twice in A 30+ at Shady Burro day 2; this entry has no scores",
+}
+
+
+def _has_scores(r: dict) -> bool:
+    return (_int_or_none(r.get("sectionsCompleted")) or 0) > 0
+
+
+def drop_ignored_and_empty_duplicates(results: list[dict], log=print) -> list[dict]:
+    """Remove results listed in IGNORE_RESULTS, and empty duplicate entries.
+
+    When LiveLaps lists the same rider twice in the same class and exactly one
+    entry has scores, the empty one is dropped (with a note in the output). Any
+    other duplicate is left in, so the import stops and a person decides.
+    """
+    kept = []
+    for r in results:
+        rid = _int_or_none(r.get("id"))
+        if rid in IGNORE_RESULTS:
+            log(f"  Skipping LiveLaps result {rid}: {IGNORE_RESULTS[rid]}")
+        else:
+            kept.append(r)
+
+    groups: dict = {}
+    for r in kept:
+        groups.setdefault((r.get("userId"), normalize(r.get("className"))), []).append(r)
+    drop = set()
+    for entries in groups.values():
+        if len(entries) < 2:
+            continue
+        scored = [r for r in entries if _has_scores(r)]
+        if len(scored) == 1:
+            for r in entries:
+                if r is not scored[0]:
+                    drop.add(id(r))
+                    log(f"  Skipping empty duplicate entry for {r.get('fullName')} in {r.get('className')} "
+                        f"(LiveLaps result {r.get('id')}, no sections completed)")
+    return [r for r in kept if id(r) not in drop]
+
+
 # ---------------------------------------------------------------- riders
 
 def rider_rows(results: list[dict]) -> list[dict]:
@@ -171,6 +213,20 @@ def result_rows(results, event_id, rider_ids: dict, class_for) -> list[dict]:
     ids = [r["livelaps_result_id"] for r in rows]
     if len(ids) != len(set(ids)):
         problems.append("LiveLaps returned the same result id more than once.")
+    # The database allows one result per rider per class per event.
+    seen_pair: dict = {}
+    for raw, row in zip(results, rows):
+        if row["rider_id"] and row["class_id"]:
+            seen_pair.setdefault((row["rider_id"], row["class_id"]), []).append(raw)
+    for entries in seen_pair.values():
+        if len(entries) > 1:
+            e = entries[0]
+            detail = "; ".join(
+                f"result {x.get('id')}: class place {x.get('classPosition')}, overall {x.get('overallPosition')}, "
+                f"standing {x.get('standing')}, sections {x.get('sectionsCompleted')}"
+                for x in entries)
+            problems.append(f"{e.get('fullName')} (userId {e.get('userId')}) is listed {len(entries)} times "
+                            f"in {e.get('className')}: {detail}")
     if problems:
         raise EventImportError("\n  - ".join(["Can't import this event:"] + problems))
     return rows
@@ -323,6 +379,7 @@ def import_event(store, event: dict, log=print, results_file: str | None = None)
         log(f"Fetched {len(raw)} LiveLaps results from {livelaps.api_url(event['results_url'])}")
     if not raw:
         raise EventImportError("LiveLaps returned no results (results may not be posted yet).")
+    raw = drop_ignored_and_empty_duplicates(raw, log)
 
     classes, divisions, series = store.classes(), store.divisions(), store.series()
 
