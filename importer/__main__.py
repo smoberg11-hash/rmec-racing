@@ -162,6 +162,11 @@ def main(argv=None):
         except (pipeline.EventImportError, SupabaseError, ValueError) as e:
             failures += 1
             print(f"FAILED: {e}\nThis event was NOT marked processed; fix the problem and run again.", file=sys.stderr)
+        except Exception as e:  # anything unexpected: report it and carry on with the other events
+            failures += 1
+            print(f"FAILED (unexpected {type(e).__name__}): {e}\n"
+                  "This event was NOT marked processed. Send this message to whoever maintains the importer.",
+                  file=sys.stderr)
 
     print(f"\nDone: {len(events) - failures} ok, {failures} failed.")
     return 1 if failures else 0

@@ -190,22 +190,34 @@ def parse_class_page(text: str, class_name: str, *, source: str, key_prefix: str
         number = re.sub(r"\D", "", group_label)
         group = dict(page.options).get(f"O{number}") or f"Overall group {number or '?'}"
         names = [c[1] for c in header[6:]]
+        groups = 2
     else:
         # Grouped layout: "Overall A/B Results" | "<class> Results" | Rider Name | ...
-        group = re.sub(r"\s*Results$", "", group_label).strip() if group_label.lower().startswith("overall") else None
-        names = [c[1] for c in header[2:]]
+        # or class-only:  "<class> Results" | Rider Name | ...  (no overall group, e.g. some youth races)
+        groups = 0
+        while groups < len(header) and header[groups][1].endswith("Results"):
+            groups += 1
+        if groups >= 2:
+            group = re.sub(r"\s*Results$", "", group_label).strip() if group_label.lower().startswith("overall") else None
+        else:
+            group = None
+        names = [c[1] for c in header[max(groups, 1):]]
 
     results = []
     for row in table:
-        if any(c[0] != "td" for c in row) or len(row) != 6 + len(names):
+        place_cells = 3 if groups == 1 else 6
+        if any(c[0] != "td" for c in row) or len(row) != place_cells + len(names):
             continue
         cells = [c[1] for c in row]
         rider_mt_id = next((c[2] for c in row if c[2]), None)
-        extra = dict(zip(names, cells[6:]))
+        extra = dict(zip(names, cells[place_cells:]))
         full = clean_name(extra.get("Rider Name", ""))
         if not full:
             continue
-        overall_cell, class_cell = cells[0].upper(), cells[3].upper()
+        if place_cells == 3:      # class-only page: no overall place
+            overall_cell, class_cell = "", cells[0].upper()
+        else:
+            overall_cell, class_cell = cells[0].upper(), cells[3].upper()
         class_place = _int(class_cell)
         standing = "Scored" if class_place else (class_cell if class_cell in STATUS_WORDS else (class_cell or "Unknown"))
         first, _, last = full.partition(" ")
@@ -279,11 +291,16 @@ def fetch_results(link: str) -> list[dict]:
         folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), "debug")
         os.makedirs(folder, exist_ok=True)
         code, name, text = empty[0]
-        path = os.path.join(folder, f"mototally_{series}_{year}_{event}_{code}.html")
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(text)
+        safe = re.sub(r"[^A-Za-z0-9]+", "-", f"{series}_{year}_{event}_{code}")
+        path = os.path.join(folder, f"mototally_{safe}.html")
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(text)
+            saved = f"; saved {path}"
+        except OSError:
+            saved = ""
         print(f"  note: {len(empty)} MotoTally classes had no readable results "
-              f"({', '.join(n for _, n, _ in empty[:5])}{'…' if len(empty) > 5 else ''}); saved {path}")
+              f"({', '.join(n for _, n, _ in empty[:5])}{'…' if len(empty) > 5 else ''}){saved}")
     return results
 
 

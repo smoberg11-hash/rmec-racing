@@ -263,3 +263,13 @@ class SeriesIndexLink(unittest.TestCase):
             self.assertIn("Dayton Enduro Youth 50's HS: " + self.INDEX + "/2026/35", str(two.exception))
             with self.assertRaises(ValueError):
                 mototally.resolve_index_link(self.INDEX, "2026-07-04")
+
+
+class ClassOnlyLayout(unittest.TestCase):
+    def test_youth_page_without_overall_group(self):
+        rows = mototally.parse_class_page(page("mototally_real_IERA_HS_2026_39_C15.html"), "Mini 9-14 (85s)",
+                                          source="x", key_prefix="k")
+        self.assertEqual([(r["fullName"], r["classPosition"], r["groupPosition"], r["classGroup"], r["displayedNumber"])
+                          for r in rows],
+                         [("Wyatt Maxwell", 1, None, None, "711"), ("Hoyt Kammeyer", 2, None, None, "731"),
+                          ("Jace Brinkman", 4, None, None, "249")])
