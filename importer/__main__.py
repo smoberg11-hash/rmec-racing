@@ -47,14 +47,14 @@ def write_report(path, proposed):
 
 def find_classes(store, events):
     """Add every LiveLaps class name that doesn't match an RMEC class to class_map.csv."""
-    from . import livelaps
+    from . import sources
 
     classes, series = store.classes(), store.series()
     class_map = pipeline.load_class_map()
     found = {}  # normalized name -> [display name, riders, first event]
     for ev in events:
         try:
-            raw = livelaps.fetch_results(ev["results_url"])
+            raw, _ = sources.fetch_results(ev["results_url"])
         except Exception as e:  # keep going; report at the end
             print(f"  {ev.get('name')}: couldn't fetch results ({e})")
             continue

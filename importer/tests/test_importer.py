@@ -122,7 +122,7 @@ class Importing(unittest.TestCase):
         classes = [cls("sp-c", "Sportsman", "C"), cls("sp-d", "Sportsman", "D")]
         match = pipeline.build_class_matcher(classes, EVENT_ROW, SERIES)
         with self.assertRaises(pipeline.EventImportError) as ctx:
-            pipeline.result_rows([{"id": 5, "userId": 9, "className": "Sportsman"}], EVENT, {9: "r9"}, match)
+            pipeline.result_rows([{"id": 5, "userId": 9, "className": "Sportsman"}], EVENT, {("ll", 9): "r9"}, match)
         self.assertIn("More than one", str(ctx.exception))
 
     def test_junior_event_scores_without_divisions(self):
@@ -137,7 +137,7 @@ class Importing(unittest.TestCase):
         raw = [{"id": 4768804, "userId": 452791, "fullName": "Collin Heath", "className": "A 30+", "classPosition": 9},
                {"id": 4774782, "userId": 452791, "fullName": "Collin Heath", "className": "A 30+", "classPosition": 14}]
         with self.assertRaises(pipeline.EventImportError) as ctx:
-            pipeline.result_rows(raw, EVENT, {452791: "r1"}, match)
+            pipeline.result_rows(raw, EVENT, {("ll", 452791): "r1"}, match)
         self.assertIn("Collin Heath", str(ctx.exception))
         self.assertIn("listed 2 times", str(ctx.exception))
 
@@ -161,13 +161,13 @@ class Importing(unittest.TestCase):
         match = pipeline.build_class_matcher([cls("aopen", "A Open", "A")], EVENT_ROW, SERIES)
         with self.assertRaises(pipeline.EventImportError) as ctx:
             pipeline.result_rows([{"id": 5, "userId": 9, "className": "Z Class", "fullName": "Z"}],
-                                 EVENT, {9: "r9"}, match)
+                                 EVENT, {("ll", 9): "r9"}, match)
         self.assertIn("Z Class", str(ctx.exception))
 
     def test_results_follow_rider_by_user_id_not_list_order(self):
         match = pipeline.build_class_matcher([cls("aopen", "A Open", "A")], EVENT_ROW, SERIES)
         raw = [{"id": 1, "userId": 111, "className": "A Open"}, {"id": 2, "userId": 222, "className": "A Open"}]
-        rows = pipeline.result_rows(raw, EVENT, {222: "rider-B", 111: "rider-A"}, match)
+        rows = pipeline.result_rows(raw, EVENT, {("ll", 222): "rider-B", ("ll", 111): "rider-A"}, match)
         self.assertEqual([r["rider_id"] for r in rows], ["rider-A", "rider-B"])
         self.assertNotIn("points", rows[0])  # re-import must not wipe points
 
@@ -258,7 +258,7 @@ class RealHaystackSample(unittest.TestCase):
                 classes.append(cls(f"c{i}", n, "C"))
             else:
                 classes.append(cls(f"c{i}", n, "D"))
-        riders = {r["livelaps_id"]: f"rider-{r['livelaps_id']}" for r in pipeline.rider_rows(raw)}
+        riders = {("ll", r["livelaps_id"]): f"rider-{r['livelaps_id']}" for r in pipeline.rider_rows(raw)}
         rows = pipeline.result_rows(raw, EVENT, riders, pipeline.build_class_matcher(classes, EVENT_ROW, SERIES))
         for i, r in enumerate(rows):
             r["id"] = f"r{i}"

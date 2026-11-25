@@ -76,6 +76,13 @@ class Supabase:
             saved.extend(out or [])
         return saved
 
+    def insert(self, table, rows, chunk=500):
+        saved = []
+        for i in range(0, len(rows), chunk):
+            out, _ = self._request("POST", table, None, rows[i:i + chunk], headers={"Prefer": "return=representation"})
+            saved.extend(out or [])
+        return saved
+
     def delete(self, table, filters):
         out, _ = self._request("DELETE", table, filters, headers={"Prefer": "return=representation"})
         return out or []

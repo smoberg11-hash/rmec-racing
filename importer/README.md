@@ -41,5 +41,8 @@ It adds every unmatched name to `importer/class_map.csv` with a suggestion. Open
 ## One race, several LiveLaps links
 Some races (often Junior) split classes across several LiveLaps links. Put all of them in that event's `results_url` cell, separated by spaces, commas or new lines. The importer fetches each one and imports them as one race. A division's classes must all be in the same link, because places from different links can't be compared; if they're split, the importer stops and says so.
 
+## MotoTally races (e.g. CORCS)
+Put the race link in `results_url`, e.g. `https://www.moto-tally.com/CORCS/Results.aspx/2026/3` (season 2026, race #3 on the series' results page). The importer reads every class's Summary page. MotoTally has no rider ids, so riders are matched to existing riders by full name (stars like "***" are ignored); new names become new riders, two riders with the same name stop the import, and similar names are printed so you can merge spelling variants. Needs the one-time SQL: `alter table riders alter column livelaps_id drop not null;` and `alter table results add column source_key text unique;`.
+
 ## Scheduling
 `importer/import-results.yml` runs it weekly on GitHub Actions. Move it to `.github/workflows/import-results.yml` once the repo is on GitHub. Add two repository secrets, `SUPABASE_URL` and `SUPABASE_SECRET_KEY`. You can also run it by hand from the Actions tab and choose an event or a dry run.

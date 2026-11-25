@@ -7,7 +7,7 @@ import os
 import re
 from datetime import date
 
-from . import livelaps, scoring
+from . import livelaps, scoring, sources
 
 # LiveLaps class names that differ from the official class name in Supabase.
 # Key: LiveLaps name. Value: Supabase classes.name. Case and spacing don't matter.
@@ -99,6 +99,25 @@ IGNORE_RESULTS = {
 }
 
 
+def rider_key(r: dict):
+    """LiveLaps riders are identified by their LiveLaps user id; riders from sites
+    without ids (MotoTally) by their normalized full name."""
+    uid = _int_or_none(r.get("userId"))
+    if uid is not None:
+        return ("ll", uid)
+    name = r.get("fullName") or f"{r.get('firstName') or ''} {r.get('lastName') or ''}"
+    return ("name", normalize(name))
+
+
+def result_key(r: dict):
+    """Stable id of a result across re-imports: source_key (MotoTally), else the LiveLaps result id.
+    Works for raw results, built rows and rows read back from the database."""
+    if r.get("source_key"):
+        return str(r["source_key"])
+    lid = _int_or_none(r["livelaps_result_id"] if "livelaps_result_id" in r else r.get("id"))
+    return f"ll:{lid}" if lid is not None else None
+
+
 def _has_scores(r: dict) -> bool:
     return (_int_or_none(r.get("sectionsCompleted")) or 0) > 0
 
@@ -120,7 +139,7 @@ def drop_ignored_and_empty_duplicates(results: list[dict], log=print) -> list[di
 
     groups: dict = {}
     for r in kept:
-        groups.setdefault((r.get("userId"), normalize(r.get("className"))), []).append(r)
+        groups.setdefault((rider_key(r), normalize(r.get("className"))), []).append(r)
     drop = set()
     for entries in groups.values():
         if len(entries) < 2:
@@ -138,7 +157,7 @@ def drop_ignored_and_empty_duplicates(results: list[dict], log=print) -> list[di
 # ---------------------------------------------------------------- riders
 
 def rider_rows(results: list[dict]) -> list[dict]:
-    """One row per LiveLaps rider, ready to upsert on riders.livelaps_id.
+    """One row per LiveLaps rider (results with a userId), ready to upsert on riders.livelaps_id.
 
     is_member and every private field are left out on purpose, so importing
     never overwrites membership data.
@@ -147,7 +166,7 @@ def rider_rows(results: list[dict]) -> list[dict]:
     for r in results:
         uid = _int_or_none(r.get("userId"))
         if uid is None:
-            raise EventImportError(f"LiveLaps result {r.get('id')} ({r.get('fullName')}) has no userId.")
+            continue
         first, last = (r.get("firstName") or "").strip(), (r.get("lastName") or "").strip()
         by_user[uid] = {
             "livelaps_id": uid,
@@ -158,6 +177,72 @@ def rider_rows(results: list[dict]) -> list[dict]:
             "bike_brand": (r.get("brand") or "").strip() or None,
         }
     return list(by_user.values())
+
+
+def named_rider_rows(results: list[dict]) -> dict:
+    """{("name", normalized name): new-rider row} for results without a LiveLaps id (MotoTally)."""
+    out: dict = {}
+    for r in results:
+        key = rider_key(r)
+        if key[0] != "name" or not key[1]:
+            continue
+        first, last = (r.get("firstName") or "").strip(), (r.get("lastName") or "").strip()
+        out.setdefault(key, {
+            "first_name": first or None,
+            "last_name": last or None,
+            "full_name": (r.get("fullName") or f"{first} {last}").strip(),
+            "rider_number": (str(r["displayedNumber"]).strip() or None) if r.get("displayedNumber") not in (None, "") else None,
+            "bike_brand": (r.get("brand") or "").strip() or None,
+        })
+    return out
+
+
+def match_named_riders(store, named: dict, log=print) -> dict:
+    """Match riders without a LiveLaps id to existing riders by full name.
+    One match: use it. Several: stop and list them. None: create a new rider
+    (and print existing riders with a similar name, in case it's a spelling variant)."""
+    if not named:
+        return {}
+    by_name: dict = {}
+    by_last: dict = {}
+    for r in store.riders_for_name_matching():
+        for n in {normalize(r.get("full_name")), normalize(f"{r.get('first_name') or ''} {r.get('last_name') or ''}")}:
+            if n:
+                by_name.setdefault(n, {})[r["id"]] = r
+        if r.get("last_name"):
+            by_last.setdefault(normalize(r["last_name"]), []).append(r)
+
+    ids, new, clashes = {}, [], []
+    for key, row in named.items():
+        found = list(by_name.get(key[1], {}).values())
+        if len(found) == 1:
+            ids[key] = found[0]["id"]
+        elif len(found) > 1:
+            clashes.append(f"{row['full_name']} ({len(found)} riders have this name)")
+        else:
+            new.append((key, row))
+    if clashes:
+        raise EventImportError("Can't tell these riders apart by name; fix the duplicate riders in Supabase "
+                               "(or rename one) and run again: " + "; ".join(clashes))
+
+    log(f"Riders matched by name: {len(ids)} already in database, {len(new)} new")
+    for key, row in new:
+        first = normalize(row.get("first_name"))
+        similar = [r.get("full_name") for r in by_last.get(normalize(row.get("last_name")), [])
+                   if first and normalize(r.get("first_name"))[:3] == first[:3]]
+        if similar:
+            log(f"  ? New rider {row['full_name']} looks like existing {', '.join(similar)}. "
+                "If it's the same person, rename one so the names match, then re-run.")
+    if not new:
+        return ids
+    if store.dry_run:
+        ids.update({key: f"NEW-{row['full_name']}" for key, row in new})
+        return ids
+    created = store.create_riders([row for _, row in new])
+    by_created = {normalize(r["full_name"]): r["id"] for r in created}
+    for key, row in new:
+        ids[key] = by_created.get(normalize(row["full_name"]))
+    return ids
 
 
 # ---------------------------------------------------------------- classes
@@ -212,7 +297,7 @@ def result_rows(results, event_id, rider_ids: dict, class_for) -> list[dict]:
     never wipes points that scoring already set."""
     rows, missing_riders, missing_classes, ambiguous = [], [], {}, set()
     for r in results:
-        rider_id = rider_ids.get(_int_or_none(r.get("userId")))
+        rider_id = rider_ids.get(rider_key(r))
         cls = class_for(r)
         if not rider_id:
             missing_riders.append(f"{r.get('fullName')} (userId {r.get('userId')})")
@@ -237,6 +322,7 @@ def result_rows(results, event_id, rider_ids: dict, class_for) -> list[dict]:
             "standing": r.get("standing") or None,
             **result_status(r),
             "livelaps_result_id": _int_or_none(r.get("id")),
+            "source_key": r.get("source_key"),
         })
 
     problems = []
@@ -245,7 +331,7 @@ def result_rows(results, event_id, rider_ids: dict, class_for) -> list[dict]:
     if missing_classes:
         listed = ", ".join(f"'{k}' ({v})" for k, v in sorted(missing_classes.items(), key=lambda kv: str(kv[0])))
         problems.append(
-            f"These LiveLaps classes don't match any Supabase class: {listed}. "
+            f"These classes don't match any Supabase class: {listed}. "
             "Run `python3 -m importer --find-classes`, then fill in importer/class_map.csv "
             "(the RMEC class for each, or SKIP if it doesn't count for RMEC points)."
         )
@@ -254,11 +340,11 @@ def result_rows(results, event_id, rider_ids: dict, class_for) -> list[dict]:
             f"More than one Supabase class has these names: {', '.join(sorted(map(str, ambiguous)))}. "
             "Set classes.livelaps_class_id on the right one, or rename the duplicate."
         )
-    if any(r["livelaps_result_id"] is None for r in rows):
-        problems.append("Some LiveLaps results have no result id.")
-    ids = [r["livelaps_result_id"] for r in rows]
+    ids = [result_key(r) for r in rows]
+    if any(k is None for k in ids):
+        problems.append("Some results have no result id.")
     if len(ids) != len(set(ids)):
-        problems.append("LiveLaps returned the same result id more than once.")
+        problems.append("The same result appears more than once (same result id, or the same name twice in one class).")
     # The database allows one result per rider per class per event.
     seen_pair: dict = {}
     for raw, row in zip(results, rows):
@@ -405,7 +491,23 @@ class LiveStore:
         return {int(r["livelaps_id"]): r["id"] for r in saved}
 
     def save_results(self, rows):
-        return self.db.upsert("results", rows, on_conflict="livelaps_result_id")
+        # LiveLaps rows are keyed on livelaps_result_id, MotoTally rows on source_key.
+        # Each batch only sends its own key column, so LiveLaps imports don't need source_key to exist.
+        ll = [{k: v for k, v in r.items() if k != "source_key"} for r in rows if r.get("livelaps_result_id") is not None]
+        mt = [{k: v for k, v in r.items() if k != "livelaps_result_id"} for r in rows
+              if r.get("livelaps_result_id") is None and r.get("source_key")]
+        saved = []
+        if ll:
+            saved += self.db.upsert("results", ll, on_conflict="livelaps_result_id")
+        if mt:
+            saved += self.db.upsert("results", mt, on_conflict="source_key")
+        return saved
+
+    def riders_for_name_matching(self):
+        return self.db.select("riders", {"select": "id,full_name,first_name,last_name"})
+
+    def create_riders(self, rows):
+        return self.db.insert("riders", rows)
 
     def delete_results(self, ids):
         deleted = 0
@@ -485,6 +587,9 @@ class CsvStore:
     def event_results(self, event_id):
         return [r for r in self.tables["results"] if r.get("event_id") == event_id]
 
+    def riders_for_name_matching(self):
+        return self.tables["riders"]
+
 
 # ---------------------------------------------------------------- orchestration
 
@@ -493,22 +598,17 @@ def import_event(store, event: dict, log=print, results_file: str | None = None)
     event_id = event["id"]
     log(f"\n=== {event.get('name')} ({event.get('race_date')}) — {event_id}")
 
-    # 1. LiveLaps
+    # 1. Results from every link (LiveLaps and/or MotoTally)
     if results_file:
         raw = livelaps.load_results_file(results_file)
         log(f"Loaded {len(raw)} LiveLaps results from {os.path.basename(results_file)}")
     else:
         if not event.get("results_url"):
             raise EventImportError("Event has no results_url.")
-        raw = livelaps.fetch_results(event["results_url"])
-        races = livelaps.race_ids(event["results_url"])
-        if len(races) == 1:
-            log(f"Fetched {len(raw)} LiveLaps results from {livelaps.api_url(races[0])}")
-        else:
-            counts = ", ".join(f"race {rid}: {sum(r.get('_livelaps_race') == rid for r in raw)}" for rid in races)
-            log(f"Fetched {len(raw)} LiveLaps results from {len(races)} LiveLaps links ({counts})")
+        raw, counts = sources.fetch_results(event["results_url"])
+        log(f"Fetched {len(raw)} results from " + ", ".join(f"{label} ({n})" for label, n in counts))
     if not raw:
-        raise EventImportError("LiveLaps returned no results (results may not be posted yet).")
+        raise EventImportError("No results were found (they may not be posted yet).")
     raw = drop_ignored_and_empty_duplicates(raw, log)
     skip = {k for k, v in load_class_map().items() if v == SKIP}
     skipped = [r for r in raw if normalize(r.get("className")) in skip]
@@ -519,49 +619,54 @@ def import_event(store, event: dict, log=print, results_file: str | None = None)
 
     classes, divisions, series = store.classes(), store.divisions(), store.series()
 
-    # 2. Riders: one upsert covers new and existing riders, and returns every id.
+    # 2. Riders. LiveLaps riders: one upsert on livelaps_id covers new and existing
+    # riders. Riders from sites without ids (MotoTally): matched by name.
+    rider_ids: dict = {}
     riders = rider_rows(raw)
-    existing = store.riders_by_livelaps_id({r["livelaps_id"] for r in riders})
-    new = [r for r in riders if r["livelaps_id"] not in existing]
-    log(f"Riders: {len(riders)} in this race — {len(riders) - len(new)} already in database, {len(new)} new")
-    if store.dry_run:
-        rider_ids = dict(existing)
-        rider_ids.update({r["livelaps_id"]: f"NEW-{r['livelaps_id']}" for r in new})
-    else:
-        rider_ids = store.save_riders(riders)
-        if len(rider_ids) != len(riders):
-            raise EventImportError(f"Saved {len(rider_ids)} riders but expected {len(riders)}.")
+    if riders:
+        existing = store.riders_by_livelaps_id({r["livelaps_id"] for r in riders})
+        new = [r for r in riders if r["livelaps_id"] not in existing]
+        log(f"Riders: {len(riders)} in this race — {len(riders) - len(new)} already in database, {len(new)} new")
+        if store.dry_run:
+            rider_ids.update({("ll", k): v for k, v in existing.items()})
+            rider_ids.update({("ll", r["livelaps_id"]): f"NEW-{r['livelaps_id']}" for r in new})
+        else:
+            saved_ll = store.save_riders(riders)
+            if len(saved_ll) != len(riders):
+                raise EventImportError(f"Saved {len(saved_ll)} riders but expected {len(riders)}.")
+            rider_ids.update({("ll", k): v for k, v in saved_ll.items()})
+    rider_ids.update(match_named_riders(store, named_rider_rows(raw), log))
 
-    # 3. Results, matched by LiveLaps userId and class — never by list position.
+    # 3. Results, matched to riders by id (or name) and class — never by list position.
     class_for = build_class_matcher(classes, event, series)
     rows = result_rows(raw, event_id, rider_ids, class_for)
     check_divisions_single_race(raw, rows, {c['id']: c for c in classes})
     group_ranked = fill_group_positions(raw, rows, {c['id']: c for c in classes}, log)
     rerank_merged_classes(raw, rows, log)
     before = store.event_results(event_id)
-    known = {_int_or_none(r.get("livelaps_result_id")) for r in before}
-    incoming = {r["livelaps_result_id"] for r in rows}
-    stale = [r for r in before if _int_or_none(r.get("livelaps_result_id")) not in incoming]
-    log(f"Results: {len(rows)} to save — {len(incoming & known)} update existing rows, {len(incoming - known)} new")
+    by_key = {result_key(r): r for r in before}
+    incoming = {result_key(r) for r in rows}
+    stale = [r for r in before if result_key(r) not in incoming]
+    log(f"Results: {len(rows)} to save — {len(incoming & set(by_key))} update existing rows, "
+        f"{len(incoming - set(by_key))} new")
     if stale:
-        log(f"  ! {len(stale)} results already in the database for this event are no longer on LiveLaps "
+        log(f"  ! {len(stale)} results already in the database for this event are no longer in the results "
             f"(they will be left alone; review them).")
 
     # Rows saved earlier with the wrong rider or class (the old n8n bug). They're
     # removed and re-saved, because correcting them in place can collide with the
     # database rule "one result per rider per class per event".
-    by_ll = {_int_or_none(r.get("livelaps_result_id")): r for r in before}
-    wrong = [by_ll[r["livelaps_result_id"]]["id"] for r in rows
-             if r["livelaps_result_id"] in by_ll
-             and (by_ll[r["livelaps_result_id"]].get("rider_id") != r["rider_id"]
-                  or by_ll[r["livelaps_result_id"]].get("class_id") != r["class_id"])]
+    wrong = [by_key[result_key(r)]["id"] for r in rows
+             if result_key(r) in by_key
+             and (by_key[result_key(r)].get("rider_id") != r["rider_id"]
+                  or by_key[result_key(r)].get("class_id") != r["class_id"])]
 
     if store.dry_run:
         if wrong:
             log(f"  ! {len(wrong)} existing results have the wrong rider or class and would be replaced.")
-        saved = [dict(r, id=f"LL-{r['livelaps_result_id']}",
-                      points=by_ll.get(r["livelaps_result_id"], {}).get("points"),
-                      division_points=by_ll.get(r["livelaps_result_id"], {}).get("division_points"))
+        saved = [dict(r, id=f"PREVIEW-{result_key(r)}",
+                      points=by_key.get(result_key(r), {}).get("points"),
+                      division_points=by_key.get(result_key(r), {}).get("division_points"))
                  for r in rows]
     else:
         if wrong:
@@ -571,7 +676,7 @@ def import_event(store, event: dict, log=print, results_file: str | None = None)
         saved = store.event_results(event_id)
 
     # 4. Points (scored on what's in the database for this event)
-    to_score = [r for r in saved if _int_or_none(r.get("livelaps_result_id")) in incoming]
+    to_score = [r for r in saved if result_key(r) in incoming]
     calc = scoring.calculate(event_id, to_score, event, classes, divisions, series, group_ranked)
     for w in calc["warnings"]:
         log(f"  warning: {w}")

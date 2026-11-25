@@ -8,7 +8,7 @@ import collections
 import os
 import sys
 
-from . import livelaps
+from . import livelaps, sources
 from .__main__ import load_env
 from .supabase_client import Supabase
 
@@ -33,7 +33,7 @@ def main(argv):
     for ev in events:
         print(f"\n=== {ev['name']} ({ev['race_date']}) {ev['id']}")
         try:
-            raw = livelaps.fetch_results(ev["results_url"])
+            raw, _ = sources.fetch_results(ev["results_url"])
         except Exception as e:
             print("  could not fetch:", e)
             continue
