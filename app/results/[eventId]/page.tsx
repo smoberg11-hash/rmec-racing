@@ -1,4 +1,5 @@
 import { ButtonLink } from "@/components/ui";
+import EventStatus from "@/components/EventStatus";
 import { notFound } from "next/navigation";
 import { selectPublicRows } from "@/lib/supabase/data";
 import ResultsFilters from "./ResultsFilters";
@@ -14,7 +15,7 @@ type EventRow = {
   location: string | null;
   city: string | null;
   state: string | null;
-  status: string | null;
+  processed: boolean | null;
   series: string | null;
 };
 
@@ -66,7 +67,7 @@ export default async function EventResultsPage({ params }: PageProps) {
     await Promise.all([
       selectPublicRows<EventRow>(
         "events",
-        "id, name, race_date, location, city, state, status, series",
+        "id, name, race_date, location, city, state, processed, series",
         {
           equals: { column: "id", value: eventId },
           limit: 1,
@@ -196,9 +197,7 @@ export default async function EventResultsPage({ params }: PageProps) {
 
             {location && <span>{location}</span>}
 
-            {event.status && (
-              <span className="capitalize">{event.status}</span>
-            )}
+            <EventStatus raceDate={event.race_date} processed={event.processed} />
           </div>
         </header>
 

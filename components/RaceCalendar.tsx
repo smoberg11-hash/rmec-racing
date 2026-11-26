@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
+import EventStatus from "@/components/EventStatus";
 
 export type CalendarEvent = {
   id: string;
@@ -10,7 +11,7 @@ export type CalendarEvent = {
   location: string | null;
   city: string | null;
   state: string | null;
-  status: string | null;
+  processed: boolean | null;
 };
 
 type RaceCalendarProps = {
@@ -311,11 +312,7 @@ export default function RaceCalendar({ events }: RaceCalendarProps) {
                             {getEventLocation(event)}
                           </p>
 
-                          {event.status && (
-                            <span className="mt-2 inline-block rounded-full border border-white/10 px-2 py-1 text-xs text-neutral-300">
-                              {event.status}
-                            </span>
-                          )}
+                          <EventStatus raceDate={event.race_date} processed={event.processed} className="mt-2" />
 
                           <Link
                             href={`/results/${event.id}`}

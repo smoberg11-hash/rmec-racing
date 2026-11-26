@@ -54,7 +54,7 @@ function QuickLink({
 async function RaceCalendarSection() {
   const result = await selectPublicRows<EventRow>(
     "events",
-    "id, season_id, name, race_date, location, city, state, status",
+    "id, season_id, name, race_date, location, city, state, processed",
     {
       equals: { column: "season_id", value: activeSeasonId },
       orderBy: "race_date",
@@ -83,7 +83,7 @@ async function RaceCalendarSection() {
     location: event.location,
     city: event.city,
     state: event.state,
-    status: event.status,
+    processed: event.processed,
   }));
 
   return <RaceCalendar events={events} />;
@@ -92,7 +92,7 @@ async function RaceCalendarSection() {
 async function LatestRaces() {
   const result = await selectPublicRows<EventRow>(
     "events",
-    "id, season_id, name, race_date, location, city, state, status",
+    "id, season_id, name, race_date, location, city, state, processed",
     {
       equals: { column: "season_id", value: activeSeasonId },
       orderBy: "race_date",
