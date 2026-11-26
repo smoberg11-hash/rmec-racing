@@ -325,6 +325,22 @@ class MergedClasses(unittest.TestCase):
         pipeline.rerank_merged_classes(raw, rows, log=lambda *_: None)
         self.assertEqual([r["position"] for r in rows], [1, 3, 2, None])
 
+    def test_class_override_moves_rider_and_reranks_by_overall(self):
+        classes = {"A 40+": {"id": "a40"}, "A 45+": {"id": "a45"}}
+        class_for = lambda r: classes.get(r["className"])
+        raw = [{"fullName": "Joe Greenwood", "className": "A Senior 40+"},
+               {"fullName": "Robert Bullard", "className": "A 45+ RMEC"},
+               {"fullName": "Tyler Holm", "className": "A Senior 40+"}]
+        rows = [{"class_id": "a40", "position": 4, "overall_position": 10, "dns": False, "dnf": False, "disqualified": False},
+                {"class_id": "a45", "position": 1, "overall_position": 15, "dns": False, "dnf": False, "disqualified": False},
+                {"class_id": "a40", "position": 1, "overall_position": 2, "dns": False, "dnf": False, "disqualified": False}]
+        pipeline.apply_class_overrides(raw, rows, "ev", class_for, {("ev", "joe greenwood"): "A 45+"}, log=lambda *_: None)
+        self.assertEqual([r["class_id"] for r in rows], ["a45", "a45", "a40"])
+        pipeline.rerank_merged_classes(raw, rows, log=lambda *_: None)
+        self.assertEqual([r["position"] for r in rows], [1, 2, 1])
+        with self.assertRaises(pipeline.EventImportError):
+            pipeline.apply_class_overrides(raw, rows, "ev", class_for, {("ev", "tyler holm"): "Z 99+"}, log=lambda *_: None)
+
     def test_sportsman_and_trail_rider_merge_by_sections_then_time(self):
         # LTR Day 2: Sportsman has a group position, Trail Rider has none, so there is
         # no shared ranking; most sections then shortest time decides. A DNF with a

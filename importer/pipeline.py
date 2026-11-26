@@ -228,6 +228,41 @@ def named_rider_rows(results: list[dict]) -> dict:
     return out
 
 
+CLASS_OVERRIDES_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "class_overrides.csv")
+
+
+def load_class_overrides(path: str | None = None) -> dict:
+    """{(event id, normalized rider name): RMEC class name} from importer/class_overrides.csv.
+    For a rider who entered a class that isn't their RMEC class at one race; they are
+    scored in their RMEC class there, re-ranked with that class (as LiveLaps does)."""
+    path = path or CLASS_OVERRIDES_FILE
+    out = {}
+    if os.path.exists(path):
+        with open(path, newline="", encoding="utf-8-sig") as f:
+            for row in csv.DictReader(f):
+                ev, name, cls = (row.get("event_id") or "").strip(), normalize(row.get("results_name")), (row.get("rmec_class") or "").strip()
+                if ev and name and cls:
+                    out[(ev, name)] = cls
+    return out
+
+
+def apply_class_overrides(raw: list[dict], rows: list[dict], event_id: str, class_for, overrides: dict, log=print) -> None:
+    moved = []
+    for r, row in zip(raw, rows):
+        name = r.get("fullName") or f"{r.get('firstName') or ''} {r.get('lastName') or ''}"
+        target = overrides.get((event_id, normalize(name)))
+        if not target:
+            continue
+        cls = class_for({"className": target})
+        if not cls or cls is AMBIGUOUS:
+            raise EventImportError(f"class_overrides.csv: '{target}' for {name} is not an RMEC class in this series.")
+        if row["class_id"] != cls["id"]:
+            row["class_id"] = cls["id"]
+            moved.append(f"{name} -> {target}")
+    if moved:
+        log(f"  Class overrides: {', '.join(moved)}")
+
+
 RIDER_ALIASES_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "rider_aliases.csv")
 
 
@@ -782,6 +817,7 @@ def import_event(store, event: dict, log=print, results_file: str | None = None,
     # 3. Results, matched to riders by id (or name) and class — never by list position.
     class_for = build_class_matcher(classes, event, series)
     rows = result_rows(raw, event_id, rider_ids, class_for)
+    apply_class_overrides(raw, rows, event_id, class_for, load_class_overrides(), log)
     check_divisions_single_race(raw, rows, {c['id']: c for c in classes})
     group_ranked = fill_group_positions(raw, rows, {c['id']: c for c in classes}, log)
     rerank_merged_classes(raw, rows, log)

@@ -171,7 +171,8 @@ export async function loadSeasonStandings(
   // Worker points are for the adult series only (rulebook 5.11).
   if (kind === "adult") {
     for (const c of credits) {
-      if (c.kind === "worker_points") workerCredits.set(c.rider_id, (workerCredits.get(c.rider_id) ?? 0) + 1);
+      // One set of worker points per rider per season, in one class (rulebook 5.7).
+      if (c.kind === "worker_points") workerCredits.set(c.rider_id, 1);
     }
   }
   const withWorkerPoints = applyWorkerPoints({
