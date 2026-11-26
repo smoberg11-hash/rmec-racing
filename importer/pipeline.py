@@ -246,7 +246,18 @@ def load_class_overrides(path: str | None = None) -> dict:
     return out
 
 
-def apply_class_overrides(raw: list[dict], rows: list[dict], event_id: str, class_for, overrides: dict, log=print) -> None:
+def _with_overrides(class_for, event_id: str, overrides: dict):
+    """class_for that sends overridden riders straight to their override class (so a rider who
+    entered a skipped class, e.g. AA Vet, still gets a class)."""
+    def match(r: dict):
+        name = r.get("fullName") or f"{r.get('firstName') or ''} {r.get('lastName') or ''}"
+        target = overrides.get((event_id, normalize(name)))
+        return class_for({"className": target}) if target else class_for(r)
+    return match
+
+
+def apply_class_overrides(raw: list[dict], rows: list[dict], event_id: str, class_for, overrides: dict, log=print,
+                          already_applied: bool = False) -> None:
     moved = []
     for r, row in zip(raw, rows):
         name = r.get("fullName") or f"{r.get('firstName') or ''} {r.get('lastName') or ''}"
@@ -256,9 +267,9 @@ def apply_class_overrides(raw: list[dict], rows: list[dict], event_id: str, clas
         cls = class_for({"className": target})
         if not cls or cls is AMBIGUOUS:
             raise EventImportError(f"class_overrides.csv: '{target}' for {name} is not an RMEC class in this series.")
-        if row["class_id"] != cls["id"]:
+        if row["class_id"] != cls["id"] or already_applied:
             row["class_id"] = cls["id"]
-            moved.append(f"{name} -> {target}")
+            moved.append(f"{name} ({r.get('className')}) -> {target}")
     if moved:
         log(f"  Class overrides: {', '.join(moved)}")
 
@@ -787,11 +798,19 @@ def import_event(store, event: dict, log=print, results_file: str | None = None,
         raise EventImportError("No results were found (they may not be posted yet).")
     raw = drop_ignored_and_empty_duplicates(raw, log)
     lookup = class_lookup()
-    skipped = [r for r in raw if lookup(r.get("className"), r.get("_livelaps_race")) == SKIP]
+    # A class override (importer/class_overrides.csv, e.g. an approved petition) keeps a rider
+    # even when the class they entered is skipped, like AA Vet at Outlaw.
+    overrides = load_class_overrides()
+
+    def overridden(r):
+        name = r.get("fullName") or f"{r.get('firstName') or ''} {r.get('lastName') or ''}"
+        return (event_id, normalize(name)) in overrides
+
+    skipped = [r for r in raw if lookup(r.get("className"), r.get("_livelaps_race")) == SKIP and not overridden(r)]
     if skipped:
         names = sorted({str(r.get("className")) for r in skipped})
         log(f"  Skipping {len(skipped)} results in non-RMEC classes: {', '.join(names)}")
-        raw = [r for r in raw if lookup(r.get("className"), r.get("_livelaps_race")) != SKIP]
+        raw = [r for r in raw if lookup(r.get("className"), r.get("_livelaps_race")) != SKIP or overridden(r)]
 
     classes, divisions, series = store.classes(), store.divisions(), store.series()
 
@@ -830,9 +849,9 @@ def import_event(store, event: dict, log=print, results_file: str | None = None,
     rider_ids.update(match_named_riders(store, named_rider_rows(raw), log))
 
     # 3. Results, matched to riders by id (or name) and class — never by list position.
-    class_for = build_class_matcher(classes, event, series)
-    rows = result_rows(raw, event_id, rider_ids, class_for)
-    apply_class_overrides(raw, rows, event_id, class_for, load_class_overrides(), log)
+    base_class_for = build_class_matcher(classes, event, series)
+    rows = result_rows(raw, event_id, rider_ids, _with_overrides(base_class_for, event_id, overrides))
+    apply_class_overrides(raw, rows, event_id, base_class_for, overrides, log, already_applied=True)
     check_divisions_single_race(raw, rows, {c['id']: c for c in classes})
     group_ranked = fill_group_positions(raw, rows, {c['id']: c for c in classes}, log)
     rerank_merged_classes(raw, rows, log)
