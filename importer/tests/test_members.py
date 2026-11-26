@@ -82,3 +82,28 @@ class Plan(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ListWithoutDates(unittest.TestCase):
+    def test_name_only_list_uses_year_from_file_name(self):
+        import tempfile
+        folder = tempfile.mkdtemp()
+        path = os.path.join(folder, "2026 RMEC Membership.csv")
+        with open(path, "w", newline="", encoding="utf-8-sig") as f:
+            f.write("Last Name,First Name,Email,\nSauerbrey,Aaron,a@example.com,Aaron Sauerbrey\n")
+        try:
+            default = members.default_expiration(path)
+            got, skipped = members.read_members(path, TODAY, expires_default=default)
+        finally:
+            os.unlink(path)
+            os.rmdir(folder)
+        self.assertEqual(default, date(2026, 12, 31))
+        self.assertEqual([(m["first"], m["last"], m["expires"]) for m in got], [("Aaron", "Sauerbrey", date(2026, 12, 31))])
+        self.assertEqual(skipped, [])
+
+    def test_existing_number_kept_when_list_has_none(self):
+        updates, _, _ = members.plan(
+            [{"first": "Aaron", "last": "Sauerbrey", "number": None, "expires": date(2026, 12, 31)}],
+            [{"id": "r1", "first_name": "Aaron", "last_name": "Sauerbrey", "is_member": False, "membership_number": "77"}],
+            TODAY)
+        self.assertEqual(updates[0][2], {"is_member": True, "membership_expiration": "2026-12-31"})

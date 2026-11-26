@@ -59,7 +59,14 @@ def parse_date(text: str):
     return None
 
 
-def read_members(path: str, today: date | None = None):
+def default_expiration(path: str):
+    """A list with no expiration dates (e.g. "2026 RMEC Membership.csv") counts as members
+    through Dec 31 of the year in the file name."""
+    m = re.search(r"(20\d\d)", os.path.basename(path))
+    return date(int(m.group(1)), 12, 31) if m else None
+
+
+def read_members(path: str, today: date | None = None, expires_default: date | None = None):
     """Returns (members, skipped). members: dicts with first, last, number, expires."""
     today = today or date.today()
     with open(path, newline="", encoding="utf-8-sig") as f:
@@ -79,7 +86,7 @@ def read_members(path: str, today: date | None = None):
         if any(c in row for c in ORG) and "rmec" not in org.lower():
             skipped.append((label, f"not an RMEC membership ({org or 'blank'})"))
             continue
-        expires = parse_date(_col(row, EXPIRES))
+        expires = parse_date(_col(row, EXPIRES)) or (expires_default if not any(c in row for c in EXPIRES) or not _col(row, EXPIRES) else None)
         if not expires:
             skipped.append((label, f"missing or unreadable expiration date ({_col(row, EXPIRES)!r})"))
             continue
@@ -113,10 +120,12 @@ def plan(members, riders, today: date | None = None):
             continue
         r = found[0]
         matched_ids.add(r["id"])
-        values = {"is_member": True, "membership_number": m["number"],
-                  "membership_expiration": m["expires"].isoformat()}
+        values = {"is_member": True, "membership_expiration": m["expires"].isoformat()}
+        if m["number"]:  # lists without membership numbers leave the existing number alone
+            values["membership_number"] = m["number"]
         current = {"is_member": r.get("is_member") is True, "membership_number": r.get("membership_number"),
                    "membership_expiration": str(r.get("membership_expiration") or "")[:10] or None}
+        current = {k: current[k] for k in values}
         if current != values:
             updates.append((r["id"], name, values))
 
@@ -132,6 +141,8 @@ def main(argv=None):
     ap = argparse.ArgumentParser(prog="python3 -m importer.members", description="Update rider memberships from a CSV.")
     ap.add_argument("csv", help="membership CSV exported from LiveLaps")
     ap.add_argument("--apply", action="store_true", help="save changes (default is a dry run)")
+    ap.add_argument("--expires", help="expiration date (YYYY-MM-DD) for lists without one; "
+                                      "default: Dec 31 of the year in the file name")
     args = ap.parse_args(argv)
 
     here = os.path.dirname(os.path.abspath(__file__))
@@ -139,7 +150,8 @@ def main(argv=None):
     load_env(os.path.join(os.path.dirname(here), ".env.local"))
 
     try:
-        members, skipped = read_members(args.csv)
+        default = parse_date(args.expires) if args.expires else default_expiration(args.csv)
+        members, skipped = read_members(args.csv, expires_default=default)
         db = Supabase(os.environ.get("SUPABASE_URL") or os.environ.get("NEXT_PUBLIC_SUPABASE_URL", ""),
                       os.environ.get("SUPABASE_SECRET_KEY", ""))
         riders = db.select("riders", {
@@ -154,9 +166,12 @@ def main(argv=None):
     print(f"{len(members)} current RMEC members in the CSV; {len(skipped)} rows skipped.")
     for label, why in skipped:
         print(f"  skipped {label} — {why}")
+    if default:
+        print(f"Rows without an expiration date count as members until {default.isoformat()}.")
     print(f"\n{len(updates)} riders to update ({len(members) - len(updates) - len(problems)} already up to date).")
     for _, name, v in updates:
-        print(f"  {name}: member #{v['membership_number']} until {v['membership_expiration']}")
+        number = f" #{v['membership_number']}" if v.get("membership_number") else ""
+        print(f"  {name}: member{number} until {v['membership_expiration']}")
     if problems:
         print(f"\n{len(problems)} members not matched:")
         for name, why in problems:
