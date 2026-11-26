@@ -113,21 +113,43 @@ export default function StandingsBoard({
         </div>
       )}
 
-      <div className="flex flex-wrap items-center gap-3">
-        <button
-          type="button"
-          onClick={() => setTrophy((t) => !t)}
-          aria-pressed={trophy}
-          disabled={!creditsLoaded}
-          className={`rounded-xl px-5 py-3 text-sm font-black uppercase tracking-wide transition disabled:cursor-not-allowed disabled:opacity-40 ${
-            trophy
-              ? "border border-white/15 bg-white/[0.04] text-neutral-200 hover:border-lime-400/60 hover:text-lime-300"
-              : "bg-lime-400 text-[#101211] shadow-[0_8px_24px_-10px_rgba(163,230,53,0.7)] hover:bg-lime-300"
-          }`}
-        >
-          {trophy ? "Membership standings" : "Year-end trophy standings"}
-        </button>
-        <p className="text-sm text-neutral-400">
+      <div className="rounded-2xl border border-white/10 bg-[#141816] p-5">
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-[1fr_1fr_auto] lg:items-end">
+          <MultiSelect
+            label={hasDivisions ? "Standings" : "Classes"}
+            options={viewOptions}
+            selected={shownViews}
+            onChange={(ids) => setViews(ids ?? viewOptions.map((o) => o.id))}
+            allText={(n) => (hasDivisions && hasOverall(division) ? `Overall + all classes (${n})` : `All classes (${n})`)}
+            noun={hasDivisions ? "standings" : "classes"}
+          />
+          <MultiSelect
+            label="Races"
+            options={available.map((r) => ({ id: r.id, primary: r.name, tag: shortDate(r.date) }))}
+            selected={selectedRaceIds}
+            onChange={setPicked}
+            allText={(n) => `All races (${n})`}
+            noun="races"
+          />
+          <div className="sm:col-span-2 lg:col-span-1">
+            <span className="mb-2 block text-[11px] font-bold uppercase tracking-[0.2em] text-neutral-400">Switch to</span>
+            <button
+              type="button"
+              onClick={() => setTrophy((t) => !t)}
+              aria-pressed={trophy}
+              disabled={!creditsLoaded}
+              title={trophy ? "Switch to every member" : "Switch to riders eligible for year-end awards"}
+              className={`w-full whitespace-nowrap rounded-xl px-5 py-3 text-sm font-black uppercase tracking-wide transition disabled:cursor-not-allowed disabled:opacity-40 lg:w-auto ${
+                trophy
+                  ? "border border-white/15 bg-white/[0.04] text-neutral-200 hover:border-lime-400/60 hover:text-lime-300"
+                  : "bg-lime-400 text-[#101211] shadow-[0_8px_24px_-10px_rgba(163,230,53,0.7)] hover:bg-lime-300"
+              }`}
+            >
+              {trophy ? "Membership standings" : "Year-end trophy standings"}
+            </button>
+          </div>
+        </div>
+        <p className="mt-4 text-sm text-neutral-400">
           {trophy ? (
             <>
               Showing <strong className="text-white">year-end trophy standings</strong>: only riders with an{" "}
@@ -140,25 +162,6 @@ export default function StandingsBoard({
             </>
           )}
         </p>
-      </div>
-
-      <div className="grid gap-4 rounded-2xl border border-white/10 bg-[#141816] p-5 sm:grid-cols-2">
-        <MultiSelect
-          label={hasDivisions ? "Standings" : "Classes"}
-          options={viewOptions}
-          selected={shownViews}
-          onChange={(ids) => setViews(ids ?? viewOptions.map((o) => o.id))}
-          allText={(n) => (hasDivisions && hasOverall(division) ? `Overall + all classes (${n})` : `All classes (${n})`)}
-          noun={hasDivisions ? "standings" : "classes"}
-        />
-        <MultiSelect
-          label="Races"
-          options={available.map((r) => ({ id: r.id, primary: r.name, tag: shortDate(r.date) }))}
-          selected={selectedRaceIds}
-          onChange={setPicked}
-          allText={(n) => `All races (${n})`}
-          noun="races"
-        />
       </div>
 
       {tables.length === 0 && (
