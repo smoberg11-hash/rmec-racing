@@ -225,7 +225,7 @@ export default async function EventResultsPage({ params }: PageProps) {
             </p>
           </div>
         ) : (
-          <section className="overflow-hidden rounded-xl border border-white/10 bg-[#141816]">
+          <section className="rounded-xl border border-white/10 bg-[#141816]">
             <div className="border-b border-white/10 p-5">
               <h2 className="text-lg font-bold">Results</h2>
               <p className="mt-1 text-sm text-neutral-400">
