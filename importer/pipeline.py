@@ -574,6 +574,10 @@ def rerank_merged_classes(raw: list[dict], rows: list[dict], log=print) -> None:
                         _int_or_none(r.get("groupPosition")) for r, _ in finished):
                     rank = {id(row): (_int_or_none(r.get("groupPosition")), row["position"] or 999) for r, row in finished}
                     how = f"group position ({grps.pop()})"
+                elif finished and all(r.get("enduroScore") for r, _ in finished):
+                    # Timekeeping enduro (MotoTally IERA): checks cleaned, then time.
+                    rank = {id(row): tuple(r["enduroScore"]) for r, row in finished}
+                    how = "enduro score"
                 elif all(_int_or_none(r.get("sectionsCompleted")) is not None for r, _ in finished):
                     # No shared ranking (e.g. Sportsman + Trail Rider, class-only youth pages):
                     # most sections first, then the shorter total time.

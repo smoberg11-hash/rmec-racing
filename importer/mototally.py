@@ -204,14 +204,17 @@ def parse_class_page(text: str, class_name: str, *, source: str, key_prefix: str
         while groups < len(header) and header[groups][1].endswith("Results"):
             groups += 1
         if groups >= 2:
-            group = re.sub(r"\s*Results$", "", group_label).strip() if group_label.lower().startswith("overall") else None
+            # Some classes sit in two overalls (e.g. IERA B riders in "Overall A" and "Overall B");
+            # the one next to the class column is the class's own division.
+            own = header[groups - 2][1]
+            group = re.sub(r"\s*Results$", "", own).strip() if own.lower().startswith("overall") else None
         else:
             group = None
         names = [c[1] for c in header[max(groups, 1):]]
 
     results = []
     for row in table:
-        place_cells = 3 if groups == 1 else 6
+        place_cells = 3 * max(groups, 1)
         if any(c[0] != "td" for c in row) or len(row) != place_cells + len(names):
             continue
         cells = [c[1] for c in row]
@@ -222,8 +225,8 @@ def parse_class_page(text: str, class_name: str, *, source: str, key_prefix: str
             continue
         if place_cells == 3:      # class-only page: no overall place
             overall_cell, class_cell = "", cells[0].upper()
-        else:
-            overall_cell, class_cell = cells[0].upper(), cells[3].upper()
+        else:                     # the overall next to the class column, then the class
+            overall_cell, class_cell = cells[place_cells - 6].upper(), cells[place_cells - 3].upper()
         class_place = _int(class_cell)
         standing = "Scored" if class_place else (class_cell if class_cell in STATUS_WORDS else (class_cell or "Unknown"))
         first, _, last = full.partition(" ")

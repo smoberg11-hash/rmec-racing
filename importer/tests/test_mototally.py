@@ -328,3 +328,18 @@ class ScopedClassMapAndEnduroScore(unittest.TestCase):
         used = pipeline.fill_group_positions(raw, rows, classes, log=lambda *_: None)
         self.assertEqual([r["overall_position"] for r in rows], [2, 3, 1, None])
         self.assertEqual(used, {"div-A"})
+
+
+class TwoOverallsLayout(unittest.TestCase):
+    def test_iera_b_class_listed_in_overall_a_and_b(self):
+        # Bartlett 2026: B classes show "Overall A", "Overall B" and the class; the class's
+        # own overall (B) is the one next to the class column.
+        rows = mototally.parse_class_page(page("mototally_real_IERA_HS_2026_30_C6.html"), "B",
+                                          source="MotoTally IERA/HS 2026/30", key_prefix="mt/IERA/HS/2026/30")
+        self.assertEqual(len(rows), 15)
+        first = rows[0]
+        self.assertEqual((first["fullName"], first["classPosition"], first["groupPosition"], first["classGroup"]),
+                         ("Garrett Reynolds", 1, 1, "Overall B"))
+        self.assertEqual(first["enduroScore"], (-16, 79, 42))
+        self.assertEqual([(r["fullName"], r["standing"]) for r in rows[-2:]],
+                         [("Brenden Trail", "DNF"), ("Nicholas Sebesta", "DNF")])
