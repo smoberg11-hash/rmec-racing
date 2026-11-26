@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { rankStandings, type RaceResult, type Standing } from "@/lib/standings";
+import type { RaceResult, Standing } from "@/lib/standings";
 import type { SeasonRace } from "@/lib/standings-data";
 
 type RaceClass = { id: string; name: string; division_id: string | null };
@@ -28,24 +28,6 @@ function shortDate(date: string | null) {
 }
 
 const DIVISION_ALL = "division";
-
-/** Re-total and re-rank standings using only the chosen races. */
-function forRaces(standings: Standing[], raceIds: string[], countWins: (r: RaceResult) => boolean): Standing[] {
-  const rows = standings
-    .map((s) => {
-      const picked = raceIds.map((id) => s.races[id]).filter(Boolean) as RaceResult[];
-      return {
-        ...s,
-        points: picked.reduce((sum, r) => sum + r.points, 0),
-        rawPoints: undefined,
-        dropped: [],
-        events: picked.length,
-        wins: picked.filter(countWins).length,
-      };
-    })
-    .filter((s) => s.events > 0);
-  return rankStandings(rows);
-}
 
 export default function StandingsBoard({ classes, divisions, races, standingsByClass, standingsByDivision, drops = 0 }: Props) {
   const hasDivisions = divisions.length > 0;
@@ -135,18 +117,20 @@ export default function StandingsBoard({ classes, divisions, races, standingsByC
 
       {tables.map((t) => {
         const shownRaces = available.filter((r) => selectedRaceIds.includes(r.id) && t.full.some((s) => s.races[r.id]));
-        const standings = allRaces ? t.full : forRaces(t.full, selectedRaceIds, (r) => r.place === 1 && !r.status);
+        // Totals and ranks are always the full season (with drops); the race filter only picks columns.
+        const standings = t.full;
         return (
           <div key={t.id} className="overflow-hidden rounded-2xl border border-white/10 bg-[#141816]">
             <div className="flex flex-wrap items-end justify-between gap-3 border-b border-white/10 px-5 py-4">
               <div>
                 <h2 className="text-xl font-black uppercase tracking-tight">{t.title}</h2>
                 <p className="mt-1 text-sm text-neutral-400">
-                  {allRaces
-                    ? `${t.isDivision ? "Division" : "Class"} points${
-                        drops > 0 ? `, best results only — each rider's ${drops} lowest (missed races count as 0) are dropped` : " from every race"
-                      }. Ties go to the rider with more wins.`
-                    : `${t.isDivision ? "Division" : "Class"} points for the selected races only (no drops).`}
+                  {`${t.isDivision ? "Division" : "Class"} points${
+                    drops > 0
+                      ? ` — each rider's ${drops} lowest results (missed races count as 0) are dropped and shown crossed out`
+                      : " from every race"
+                  }. Ties go to the rider with more wins.`}
+                  {!allRaces && " Showing only the selected races; totals are for the whole season."}
                 </p>
               </div>
               <p className="text-xs font-bold uppercase tracking-[0.2em] text-neutral-500">
@@ -378,7 +362,7 @@ function SeasonTable({ standings, races }: { standings: Standing[]; races: Seaso
                     <td
                       key={r.id}
                       title={dropped ? "Dropped — doesn't count toward the total" : undefined}
-                      className={`px-3 py-3 text-center group-hover:bg-white/[0.02] ${dropped ? "opacity-35 [&_div:first-child]:line-through" : ""}`}
+                      className={`px-3 py-3 text-center group-hover:bg-white/[0.02] ${dropped ? "opacity-60 [&_div:first-child]:text-neutral-400 [&_div:first-child]:line-through [&_div:first-child]:decoration-red-400 [&_div:first-child]:decoration-2" : ""}`}
                     >
                       <RaceCell result={s.races[r.id]} />
                     </td>
