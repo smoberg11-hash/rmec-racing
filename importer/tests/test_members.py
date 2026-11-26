@@ -107,3 +107,13 @@ class ListWithoutDates(unittest.TestCase):
             [{"id": "r1", "first_name": "Aaron", "last_name": "Sauerbrey", "is_member": False, "membership_number": "77"}],
             TODAY)
         self.assertEqual(updates[0][2], {"is_member": True, "membership_expiration": "2026-12-31"})
+
+
+class MembershipAliases(unittest.TestCase):
+    def test_alias_links_nickname(self):
+        updates, problems, _ = members.plan(
+            [{"first": "Sammy", "last": "Moberg", "number": None, "expires": date(2026, 12, 31)}],
+            [{"id": "r9", "first_name": "Samuel", "last_name": "Moberg", "full_name": "Samuel Moberg"}],
+            TODAY, aliases={"sammy moberg": "samuel moberg"})
+        self.assertEqual([u[0] for u in updates], ["r9"])
+        self.assertEqual(problems, [])

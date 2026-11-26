@@ -101,19 +101,29 @@ def read_members(path: str, today: date | None = None, expires_default: date | N
     return list(members.values()), skipped
 
 
-def plan(members, riders, today: date | None = None):
-    """Work out the updates. Returns (updates, problems, expirations)."""
+def plan(members, riders, today: date | None = None, aliases: dict | None = None):
+    """Work out the updates. Returns (updates, problems, expirations).
+    aliases: {normalized name on the list: rider id or normalized rider name} from
+    importer/rider_aliases.csv, for people whose race entries use a different name."""
     today = today or date.today()
+    aliases = aliases or {}
     by_name: dict = {}
+    by_full: dict = {}
+    by_id = {r["id"]: r for r in riders}
     for r in riders:
         by_name.setdefault((_norm(r.get("first_name")), _norm(r.get("last_name"))), []).append(r)
+        by_full.setdefault(_norm(r.get("full_name")), []).append(r)
 
     updates, problems, matched_ids = [], [], set()
     for m in members:
         found = by_name.get((_norm(m["first"]), _norm(m["last"])), [])
+        alias = aliases.get(_norm(f"{m['first']} {m['last']}"))
+        if alias:
+            found = [by_id[alias]] if alias in by_id else by_full.get(alias, [])
         name = f"{m['first']} {m['last']}"
         if not found:
-            problems.append((name, "no rider with this name has raced yet (not created)"))
+            problems.append((name, "no rider with this name has raced yet (not created; if they raced under a "
+                                   "different name, add it to importer/rider_aliases.csv)"))
             continue
         if len(found) > 1:
             problems.append((name, f"{len(found)} riders share this name; update the right one by hand"))
@@ -160,7 +170,8 @@ def main(argv=None):
         print(f"Error: {e}", file=sys.stderr)
         return 2
 
-    updates, problems, expirations = plan(members, riders)
+    from .pipeline import load_rider_aliases
+    updates, problems, expirations = plan(members, riders, aliases=load_rider_aliases())
 
     print("MODE:", "APPLY — changes will be saved" if args.apply else "DRY RUN — nothing will be saved")
     print(f"{len(members)} current RMEC members in the CSV; {len(skipped)} rows skipped.")
