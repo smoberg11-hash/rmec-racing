@@ -197,6 +197,13 @@ export default function HomePage() {
               >
                 Championship Standings
               </Link>
+
+              <Link
+                href="/worker-points"
+                className="rounded-lg border border-white/20 px-5 py-3 font-bold text-white transition hover:border-lime-400 hover:text-lime-400"
+              >
+                Worker Points &amp; Eligibility
+              </Link>
             </div>
           </div>
 
@@ -228,7 +235,7 @@ export default function HomePage() {
 
       {/* Quick Links */}
       <section className="mx-auto max-w-7xl px-5 py-12 sm:px-8">
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
           <QuickLink
             title="Adult Standings"
             description="Follow the championship points race."
@@ -251,6 +258,12 @@ export default function HomePage() {
             title="Rider Stats"
             description="Explore rider profiles and season performance."
             href="/riders"
+          />
+
+          <QuickLink
+            title="Worker Points & Eligibility"
+            description="Request worker points or eligibility for year-end awards."
+            href="/worker-points"
           />
         </div>
       </section>

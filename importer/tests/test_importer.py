@@ -493,6 +493,19 @@ class DuplicateRiderPrevention(unittest.TestCase):
         self.assertEqual([(k["id"], [d["id"] for d in ds]) for k, ds in merges], [("ll", ["mt"])])
         self.assertEqual(unsure, [("Sam Lee", 2)])
 
+    def test_result_rows_carry_times(self):
+        raw = [{"id": 1, "userId": 5, "fullName": "A B", "className": "AA", "classPosition": 1,
+                "standing": "Scored", "totalCumulatedTime": "01:46:19.258", "sectionsCompleted": 12},
+               {"id": 2, "userId": 6, "fullName": "C D", "className": "AA", "classPosition": 2,
+                "standing": "Scored", "totalCumulatedTime": "00:00:00.000"},
+               {"id": None, "source_key": "mt/x", "fullName": "E F", "className": "AA", "classPosition": 3,
+                "standing": "Scored", "enduroScore": (-16, 79, 42)}]
+        rows = pipeline.result_rows(raw, "ev", {("ll", 5): "r5", ("ll", 6): "r6", ("name", "e f"): "r7"},
+                                    lambda r: {"id": "aa"})
+        self.assertEqual([r["total_time"] for r in rows], ["01:46:19.258", None, None])
+        self.assertEqual((rows[2]["enduro_checks"], rows[2]["enduro_penalty_seconds"]), (16, 79 * 60 + 42))
+        self.assertIsNone(rows[0]["enduro_checks"])
+
     def test_merge_plan_follows_aliases(self):
         from importer import merge_riders
         riders = [{"id": "rob", "full_name": "Rob Reed", "livelaps_id": 7},

@@ -386,6 +386,12 @@ def build_class_matcher(classes: list[dict], event: dict, series: list[dict]):
 
 # ---------------------------------------------------------------- results
 
+def _total_time(text):
+    """LiveLaps/MotoTally total time, or None when there isn't one ("", "00:00:00.000")."""
+    t = (text or "").strip()
+    return t if t and _seconds(t) else None
+
+
 def result_rows(results, event_id, rider_ids: dict, class_for) -> list[dict]:
     """Build results rows. points / division_points are left out so a re-import
     never wipes points that scoring already set."""
@@ -413,6 +419,11 @@ def result_rows(results, event_id, rider_ids: dict, class_for) -> list[dict]:
             "average_time": r.get("averageTime") or None,
             "fastest_lap": r.get("bestTime") or None,
             "best_time": r.get("bestTime") or None,
+            # Race time shown on the results page (results_times.sql). Enduro scores (MotoTally
+            # timekeeping) are checks reached and penalty instead of a running time.
+            "total_time": _total_time(r.get("totalCumulatedTime")),
+            "enduro_checks": -r["enduroScore"][0] if r.get("enduroScore") else None,
+            "enduro_penalty_seconds": (r["enduroScore"][1] * 60 + r["enduroScore"][2]) if r.get("enduroScore") else None,
             "standing": r.get("standing") or None,
             **result_status(r),
             "livelaps_result_id": _int_or_none(r.get("id")),

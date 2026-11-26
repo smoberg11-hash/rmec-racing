@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import http.client
 import json
+import ssl
 import time
 import urllib.error
 import urllib.parse
@@ -51,6 +53,14 @@ class Supabase:
                     time.sleep(2 ** attempt * 2)
                     continue
                 raise SupabaseError(f"{method} {table} failed: {e.reason}") from None
+            except (ssl.SSLError, ConnectionError, TimeoutError, http.client.HTTPException) as e:
+                # A dropped or garbled connection (e.g. "SSLV3_ALERT_BAD_RECORD_MAC"). Safe to resend,
+                # except a plain insert, which could then be saved twice.
+                safe = not (method == "POST" and "on_conflict" not in (params or {}))
+                if safe and attempt < retries - 1:
+                    time.sleep(2 ** attempt * 2)
+                    continue
+                raise SupabaseError(f"{method} {table} failed (connection problem: {e}). Run it again.") from None
 
     def select(self, table, params=None, page_size=1000):
         """Read all matching rows, paging past Supabase's 1000-row limit.

@@ -264,9 +264,15 @@ def main(argv=None):
     try:
         keep = [{k: v for k, v in c.items() if not k.startswith("_")} for c in credits]
         db.upsert("rider_credits", keep, on_conflict="source_key")
-        existing = db.select("rider_credits", {"select": "id,source_key", "season_id": f"eq.{season_id}"})
+        # Only rows this CSV import made; approved website requests (source 'website', key 'web|…') stay.
+        try:
+            existing = db.select("rider_credits", {"select": "id,source_key", "season_id": f"eq.{season_id}",
+                                                   "source": "eq.csv"})
+        except SupabaseError:  # before importer/credit_requests.sql added the source column
+            existing = db.select("rider_credits", {"select": "id,source_key", "season_id": f"eq.{season_id}"})
         wanted = {c["source_key"] for c in keep}
-        stale = [r["id"] for r in existing if r["source_key"] not in wanted]
+        stale = [r["id"] for r in existing
+                 if r["source_key"] not in wanted and not str(r["source_key"]).startswith("web|")]
         for i in range(0, len(stale), 100):
             db.delete("rider_credits", {"id": f"in.({','.join(stale[i:i + 100])})"})
     except SupabaseError as e:

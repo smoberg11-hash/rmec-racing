@@ -36,7 +36,24 @@ type RawResult = {
   dnf: boolean | null;
   disqualified: boolean | null;
   classes: ClassInfo | ClassInfo[] | null;
+  // Times (importer/results_times.sql); missing until that SQL has run.
+  total_time?: string | null;
+  best_time?: string | null;
+  sections_completed?: number | null;
+  enduro_checks?: number | null;
+  enduro_penalty_seconds?: number | null;
 };
+
+const RESULT_COLUMNS =
+  "id, rider_id, class_id, position, points, division_points, overall_position, dns, dnf, disqualified, classes(name, division_id)";
+const TIME_COLUMNS = ", total_time, best_time, sections_completed, enduro_checks, enduro_penalty_seconds";
+
+/** Results with times; falls back to results without them if the time columns don't exist yet. */
+async function loadResults(eventId: string) {
+  const options = { equals: { column: "event_id", value: eventId }, orderBy: "position", limit: 500 } as const;
+  const withTimes = await selectPublicRows<RawResult>("results", RESULT_COLUMNS + TIME_COLUMNS, options);
+  return withTimes.error ? selectPublicRows<RawResult>("results", RESULT_COLUMNS, options) : withTimes;
+}
 
 type Rider = {
   id: string;
@@ -74,15 +91,7 @@ export default async function EventResultsPage({ params }: PageProps) {
         }
       ),
 
-      selectPublicRows<RawResult>(
-        "results",
-        "id, rider_id, class_id, position, points, division_points, overall_position, dns, dnf, disqualified, classes(name, division_id)",
-        {
-          equals: { column: "event_id", value: eventId },
-          orderBy: "position",
-          limit: 500,
-        }
-      ),
+      loadResults(eventId),
 
       selectPublicRows<Rider>(
         "public_riders",
@@ -144,6 +153,11 @@ export default async function EventResultsPage({ params }: PageProps) {
       dns: result.dns,
       dnf: result.dnf,
       disqualified: result.disqualified,
+      totalTime: result.total_time ?? null,
+      bestTime: result.best_time ?? null,
+      sections: result.sections_completed ?? null,
+      enduroChecks: result.enduro_checks ?? null,
+      enduroPenalty: result.enduro_penalty_seconds ?? null,
     };
   });
 

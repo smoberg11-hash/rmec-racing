@@ -18,6 +18,11 @@ type Result = {
   dns: boolean | null;
   dnf: boolean | null;
   disqualified: boolean | null;
+  totalTime: string | null;
+  bestTime: string | null;
+  sections: number | null;
+  enduroChecks: number | null;
+  enduroPenalty: number | null;
 };
 
 type RaceClass = {
@@ -32,6 +37,54 @@ type Division = {
 };
 
 const NO_DIVISION = "none";
+
+/** "01:46:19.258" -> 6379.258 seconds. */
+function seconds(time: string | null) {
+  if (!time) return null;
+  const parts = time.split(":").map(Number);
+  if (parts.some((n) => Number.isNaN(n))) return null;
+  return parts.reduce((total, n) => total * 60 + n, 0);
+}
+
+/** 6379.258 -> "1:46:19.3"; 135.4 -> "2:15.4". */
+function clock(total: number, decimals = 1) {
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const sec = (total % 60).toFixed(decimals).padStart(decimals ? 3 + decimals : 2, "0");
+  return h ? `${h}:${String(m).padStart(2, "0")}:${sec}` : `${m}:${sec}`;
+}
+
+/** Enduro penalty as minutes:seconds, the way MotoTally shows it: 4782 -> "79:42". */
+function penalty(totalSeconds: number) {
+  return `${Math.floor(totalSeconds / 60)}:${String(totalSeconds % 60).padStart(2, "0")}`;
+}
+
+function isEnduro(r: Result) {
+  return r.enduroChecks != null && r.enduroPenalty != null;
+}
+
+function timeText(r: Result) {
+  if (isEnduro(r)) return `${r.enduroChecks} chk · ${penalty(r.enduroPenalty!)}`;
+  const s = seconds(r.totalTime);
+  return s ? clock(s) : "—";
+}
+
+/** Gap to the class winner: time (or penalty) behind, or sections/checks behind. */
+function gapText(r: Result, leader: Result | undefined) {
+  if (!leader || leader.id === r.id || !placed(r)) return leader?.id === r.id ? "Leader" : "—";
+  if (isEnduro(r) && isEnduro(leader)) {
+    const behind = leader.enduroChecks! - r.enduroChecks!;
+    if (behind > 0) return `−${behind} chk`;
+    return `+${penalty(Math.max(0, r.enduroPenalty! - leader.enduroPenalty!))}`;
+  }
+  if (r.sections != null && leader.sections != null && r.sections < leader.sections) {
+    const behind = leader.sections - r.sections;
+    return `−${behind} section${behind === 1 ? "" : "s"}`;
+  }
+  const a = seconds(r.totalTime);
+  const b = seconds(leader.totalTime);
+  return a != null && b != null ? `+${clock(Math.max(0, a - b))}` : "—";
+}
 
 /** Finished, or a DNF that still scored by class place (rulebook 7.5 B). */
 function placed(result: Result) {
@@ -116,6 +169,13 @@ export default function ResultsFilters({
   const showCombinedPlace = classesShown.size > 1 && divisionsShown.size === 1 && !search.trim();
   let combinedPlace = 0;
 
+  // Class winners, for the gap column (always the gap to the rider's own class winner).
+  const classLeader = new Map<string, Result>();
+  for (const r of results) if (placed(r) && r.position === 1) classLeader.set(r.classId, r);
+  const hasTimes = results.some((r) => r.totalTime || isEnduro(r));
+  const hasSections = results.some((r) => r.sections != null && !isEnduro(r));
+  const hasBest = results.some((r) => r.bestTime && seconds(r.bestTime));
+
   const hasActiveFilters = pickedDivisions !== null || pickedClasses !== null || search !== "";
 
   function clearFilters() {
@@ -186,7 +246,7 @@ export default function ResultsFilters({
         </p>
       ) : (
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[850px] text-left text-sm">
+          <table className="w-full min-w-[1000px] text-left text-sm">
             <thead className="text-xs uppercase tracking-wider text-neutral-500">
               <tr>
                 {showCombinedPlace && (
@@ -198,6 +258,14 @@ export default function ResultsFilters({
                 <th className="px-5 py-3 font-semibold">Class</th>
                 <th className="px-5 py-3 font-semibold">Class finish</th>
                 <th className="px-5 py-3 font-semibold">Overall</th>
+                {hasTimes && <th className="px-5 py-3 font-semibold">Time</th>}
+                {hasTimes && (
+                  <th className="px-5 py-3 font-semibold" title="Behind the class winner">
+                    Gap
+                  </th>
+                )}
+                {hasSections && <th className="px-5 py-3 font-semibold">Sections</th>}
+                {hasBest && <th className="px-5 py-3 font-semibold">Best section</th>}
                 <th className="px-5 py-3 font-semibold">Class points</th>
                 <th className="px-5 py-3 font-semibold">Division points</th>
               </tr>
@@ -220,6 +288,20 @@ export default function ResultsFilters({
                     <td className="px-5 py-4 font-medium">{result.className}</td>
                     <td className="px-5 py-4">{finishText(result)}</td>
                     <td className="px-5 py-4">{result.overallPosition ?? "—"}</td>
+                    {hasTimes && <td className="px-5 py-4 tabular-nums">{timeText(result)}</td>}
+                    {hasTimes && (
+                      <td className="px-5 py-4 tabular-nums text-neutral-400">
+                        {gapText(result, classLeader.get(result.classId))}
+                      </td>
+                    )}
+                    {hasSections && (
+                      <td className="px-5 py-4 tabular-nums">{isEnduro(result) ? "—" : (result.sections ?? "—")}</td>
+                    )}
+                    {hasBest && (
+                      <td className="px-5 py-4 tabular-nums">
+                        {seconds(result.bestTime) ? clock(seconds(result.bestTime)!) : "—"}
+                      </td>
+                    )}
                     <td className="px-5 py-4">{result.points ?? "—"}</td>
                     <td className="px-5 py-4">{result.divisionPoints ?? "—"}</td>
                   </tr>
