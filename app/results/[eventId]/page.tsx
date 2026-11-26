@@ -85,10 +85,8 @@ export default async function EventResultsPage({ params }: PageProps) {
 
       selectPublicRows<Rider>(
         "public_riders",
+        // No limit: Supabase returns at most 1000 rows per request, so this pages through all riders.
         "id, full_name, rider_number",
-        {
-          limit: 5000,
-        }
       ),
 
       selectPublicRows<Division>(

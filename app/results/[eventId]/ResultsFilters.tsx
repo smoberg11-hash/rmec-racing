@@ -1,8 +1,8 @@
 "use client";
 
-import { SelectField, inputClassName } from "@/components/ui";
-
 import { useMemo, useState } from "react";
+import MultiSelect from "@/components/MultiSelect";
+import { inputClassName } from "@/components/ui";
 
 type Result = {
   id: string;
@@ -31,10 +31,18 @@ type Division = {
   display_order: number;
 };
 
-function resultStatus(result: Result) {
-  if (result.disqualified) return "Disqualified";
+const NO_DIVISION = "none";
+
+/** Finished, or a DNF that still scored by class place (rulebook 7.5 B). */
+function placed(result: Result) {
+  if (result.disqualified || result.dns) return false;
+  return !result.dnf || (result.points ?? 0) > 0;
+}
+
+function finishText(result: Result) {
+  if (result.disqualified) return "DQ";
   if (result.dns) return "DNS";
-  if (result.dnf) return "DNF";
+  if (result.dnf) return result.position != null && (result.points ?? 0) > 0 ? `${result.position} (DNF)` : "DNF";
   return result.position === null ? "—" : `${result.position}`;
 }
 
@@ -47,65 +55,85 @@ export default function ResultsFilters({
   classes: RaceClass[];
   divisions: Division[];
 }) {
-  const [selectedClass, setSelectedClass] = useState("all");
-  const [selectedDivision, setSelectedDivision] = useState("all");
+  // null = everything selected.
+  const [pickedDivisions, setPickedDivisions] = useState<string[] | null>(null);
+  const [pickedClasses, setPickedClasses] = useState<string[] | null>(null);
   const [search, setSearch] = useState("");
+
+  // Only divisions (and "no division" for junior classes) that have results at this race.
+  const divisionOptions = useMemo(() => {
+    const present = new Set(results.map((r) => r.divisionId || NO_DIVISION));
+    const options = divisions
+      .filter((d) => present.has(d.id))
+      .sort((a, b) => a.display_order - b.display_order)
+      .map((d) => ({ id: d.id, primary: d.name }));
+    if (present.has(NO_DIVISION)) options.push({ id: NO_DIVISION, primary: "Junior / no division" });
+    return options;
+  }, [results, divisions]);
+  const selectedDivisions = pickedDivisions ?? divisionOptions.map((o) => o.id);
+
+  // Classes in the chosen divisions.
+  const classDivision = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const r of results) map.set(r.classId, r.divisionId || NO_DIVISION);
+    return map;
+  }, [results]);
+  const classOptions = classes
+    .filter((c) => selectedDivisions.includes(classDivision.get(c.id) ?? NO_DIVISION))
+    .map((c) => ({ id: c.id, primary: c.name }));
+  const selectedClasses = pickedClasses === null ? classOptions.map((o) => o.id) : classOptions.map((o) => o.id).filter((id) => pickedClasses.includes(id));
 
   const filteredResults = useMemo(() => {
     const query = search.trim().toLowerCase();
+    const inClasses = new Set(selectedClasses);
+    const rows = results.filter((result) => {
+      const matchesRider =
+        !query ||
+        result.riderName.toLowerCase().includes(query) ||
+        result.riderNumber.toLowerCase().includes(query) ||
+        `#${result.riderNumber}`.toLowerCase().includes(query);
+      return inClasses.has(result.classId) && matchesRider;
+    });
 
-    return results
-      .filter((result) => {
-        const matchesClass =
-          selectedClass === "all" || result.classId === selectedClass;
+    // One class: class order. Several classes: combined, by overall place, then class place.
+    const oneClass = new Set(rows.map((r) => r.classId)).size <= 1;
+    const key = (r: Result) =>
+      [
+        placed(r) ? 0 : 1,
+        oneClass ? (r.position ?? Infinity) : (r.overallPosition ?? Infinity),
+        r.position ?? Infinity,
+      ] as const;
+    return rows.sort((a, b) => {
+      const ka = key(a);
+      const kb = key(b);
+      return ka[0] - kb[0] || ka[1] - kb[1] || ka[2] - kb[2] || a.riderName.localeCompare(b.riderName);
+    });
+  }, [results, selectedClasses, search]);
 
-        const matchesDivision =
-          selectedDivision === "all" ||
-          result.divisionId === selectedDivision;
+  // A combined place only makes sense inside one division (overall places are per division).
+  const divisionsShown = new Set(filteredResults.map((r) => r.divisionId || NO_DIVISION));
+  const classesShown = new Set(filteredResults.map((r) => r.classId));
+  const showCombinedPlace = classesShown.size > 1 && divisionsShown.size === 1 && !search.trim();
+  let combinedPlace = 0;
 
-        const matchesRider =
-          !query ||
-          result.riderName.toLowerCase().includes(query) ||
-          result.riderNumber.toLowerCase().includes(query) ||
-          `#${result.riderNumber}`.toLowerCase().includes(query);
-
-        return matchesClass && matchesDivision && matchesRider;
-      })
-      .sort((a, b) => {
-        // Sort by overall finishing position.
-        if (a.overallPosition == null && b.overallPosition == null) {
-          return 0;
-        }
-        if (a.overallPosition == null) return 1;
-        if (b.overallPosition == null) return -1;
-
-        return a.overallPosition - b.overallPosition;
-      });
-  }, [results, selectedClass, selectedDivision, search]);
+  const hasActiveFilters = pickedDivisions !== null || pickedClasses !== null || search !== "";
 
   function clearFilters() {
-    setSelectedClass("all");
-    setSelectedDivision("all");
+    setPickedDivisions(null);
+    setPickedClasses(null);
     setSearch("");
   }
 
-  const hasActiveFilters =
-    selectedClass !== "all" ||
-    selectedDivision !== "all" ||
-    search !== "";
-
   return (
     <>
-      <div className="flex flex-col gap-4 border-b border-white/10 p-5 md:flex-row md:flex-wrap md:items-end">
-        {/* Rider search */}
-        <div className="min-w-[220px] flex-1">
+      <div className="grid gap-4 border-b border-white/10 p-5 md:grid-cols-2 lg:grid-cols-[1.2fr_1fr_1fr_auto] lg:items-end">
+        <div>
           <label
             htmlFor="rider-search"
             className="mb-2 block text-[11px] font-bold uppercase tracking-[0.2em] text-neutral-400"
           >
             Search rider
           </label>
-
           <input
             id="rider-search"
             type="search"
@@ -116,52 +144,42 @@ export default function ResultsFilters({
           />
         </div>
 
-        {/* Class filter */}
-        <div className="w-full md:w-56">
-          <SelectField id="class-filter" label="Filter by class" value={selectedClass} onChange={(event) => setSelectedClass(event.target.value)}>
-            <option value="all">All classes</option>
+        <MultiSelect
+          label="Divisions"
+          options={divisionOptions}
+          selected={selectedDivisions}
+          onChange={(ids) => {
+            setPickedDivisions(ids);
+            setPickedClasses(null);
+          }}
+          allText={(n) => `All divisions (${n})`}
+          noun="divisions"
+        />
 
-            {classes.map((raceClass) => (
-              <option key={raceClass.id} value={raceClass.id}>
-                {raceClass.name}
-              </option>
-            ))}
-          </SelectField>
-        </div>
+        <MultiSelect
+          label="Classes"
+          options={classOptions}
+          selected={selectedClasses}
+          onChange={setPickedClasses}
+          allText={(n) => `All classes (${n})`}
+          noun="classes"
+        />
 
-        {/* Division filter */}
-        <div className="w-full md:w-56">
-          <SelectField id="division-filter" label="Filter by division" value={selectedDivision} onChange={(event) => setSelectedDivision(event.target.value)}>
-            <option value="all">All divisions</option>
-
-            {divisions.map((division) => (
-              <option key={division.id} value={division.id}>
-                {division.name}
-              </option>
-            ))}
-          </SelectField>
-        </div>
-
-        {/* Clear filters */}
         <button
           type="button"
           onClick={clearFilters}
           disabled={!hasActiveFilters}
-          className="rounded-full border border-white/15 bg-white/[0.04] px-5 py-3 text-sm font-bold uppercase tracking-wide text-neutral-300 transition hover:border-lime-400/70 hover:text-lime-300 disabled:cursor-not-allowed disabled:opacity-40"
+          className="rounded-xl border border-white/15 bg-white/[0.04] px-5 py-3 text-sm font-bold uppercase tracking-wide text-neutral-300 transition hover:border-lime-400/70 hover:text-lime-300 disabled:cursor-not-allowed disabled:opacity-40"
         >
           Clear filters
         </button>
       </div>
 
-      {/* Result count */}
-      <div
-        className="px-5 py-3 text-sm text-neutral-400"
-        aria-live="polite"
-      >
+      <div className="px-5 py-3 text-sm text-neutral-400" aria-live="polite">
         Showing {filteredResults.length} of {results.length} results
+        {classesShown.size > 1 && " — classes combined, ordered by overall place"}
       </div>
 
-      {/* Results table */}
       {filteredResults.length === 0 ? (
         <p className="p-6 text-sm text-neutral-400">
           No riders match your filters. Try another search or clear the filters.
@@ -171,9 +189,14 @@ export default function ResultsFilters({
           <table className="w-full min-w-[850px] text-left text-sm">
             <thead className="text-xs uppercase tracking-wider text-neutral-500">
               <tr>
+                {showCombinedPlace && (
+                  <th className="px-5 py-3 font-semibold" title="Place among the selected classes">
+                    Place
+                  </th>
+                )}
                 <th className="px-5 py-3 font-semibold">Rider</th>
                 <th className="px-5 py-3 font-semibold">Class</th>
-                <th className="px-5 py-3 font-semibold">Finish</th>
+                <th className="px-5 py-3 font-semibold">Class finish</th>
                 <th className="px-5 py-3 font-semibold">Overall</th>
                 <th className="px-5 py-3 font-semibold">Class points</th>
                 <th className="px-5 py-3 font-semibold">Division points</th>
@@ -181,39 +204,27 @@ export default function ResultsFilters({
             </thead>
 
             <tbody className="divide-y divide-white/10">
-              {filteredResults.map((result) => (
-                <tr key={result.id}>
-                  <td className="px-5 py-4 font-medium">
-                    {result.riderName}
-
-                    {result.riderNumber !== "" && (
-                      <span className="ml-2 text-neutral-400">
-                        #{result.riderNumber}
-                      </span>
+              {filteredResults.map((result) => {
+                const place = showCombinedPlace && placed(result) ? ++combinedPlace : null;
+                return (
+                  <tr key={result.id}>
+                    {showCombinedPlace && (
+                      <td className="px-5 py-4 font-black text-lime-400">{place ?? "—"}</td>
                     )}
-                  </td>
-
-                  <td className="px-5 py-4 font-medium">
-                    {result.className}
-                  </td>
-
-                  <td className="px-5 py-4">
-                    {resultStatus(result)}
-                  </td>
-
-                  <td className="px-5 py-4">
-                    {result.overallPosition ?? "—"}
-                  </td>
-
-                  <td className="px-5 py-4">
-                    {result.points ?? "—"}
-                  </td>
-
-                  <td className="px-5 py-4">
-                    {result.divisionPoints ?? "—"}
-                  </td>
-                </tr>
-              ))}
+                    <td className="px-5 py-4 font-medium">
+                      {result.riderName}
+                      {result.riderNumber !== "" && (
+                        <span className="ml-2 text-neutral-400">#{result.riderNumber}</span>
+                      )}
+                    </td>
+                    <td className="px-5 py-4 font-medium">{result.className}</td>
+                    <td className="px-5 py-4">{finishText(result)}</td>
+                    <td className="px-5 py-4">{result.overallPosition ?? "—"}</td>
+                    <td className="px-5 py-4">{result.points ?? "—"}</td>
+                    <td className="px-5 py-4">{result.divisionPoints ?? "—"}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
