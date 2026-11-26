@@ -1,7 +1,10 @@
 import "server-only";
 
 import { selectPublicRows } from "@/lib/supabase/data";
-import { buildStandings, type Standing, type StandingResult } from "@/lib/standings";
+import { applyDrops, buildStandings, type Standing, type StandingResult } from "@/lib/standings";
+
+/** Each rider's lowest results that don't count toward the season total (missed races count as 0). */
+export const SEASON_DROPS = { adult: 7, junior: 3 } as const;
 
 export type StandingsClass = {
   id: string;
@@ -32,6 +35,8 @@ export type SeasonStandings = {
   /** Races this season with results in these classes, oldest first. */
   races: SeasonRace[];
   memberCount: number;
+  /** Number of lowest results dropped from each rider's season total. */
+  drops: number;
   /** Riders with results in these classes this season, and how many of them are members. */
   ridersRaced: number;
   membersRaced: number;
@@ -134,12 +139,18 @@ export async function loadSeasonStandings(
   const racedIds = new Set(results.map((r) => r.rider_id));
   const membersRaced = [...racedIds].filter((id) => memberIds.has(id)).length;
 
-  const { byClass, byDivision } = buildStandings({
+  const built = buildStandings({
     results,
     members,
     classes,
     annualDivisionIds: new Set(divisions.map((d) => d.id)),
   });
+  const drops = SEASON_DROPS[kind];
+  const raceIds = races.map((r) => r.id);
+  const withDrops = (groups: Record<string, Standing[]>) =>
+    Object.fromEntries(Object.entries(groups).map(([id, rows]) => [id, applyDrops(rows, raceIds, drops)]));
+  const byClass = withDrops(built.byClass);
+  const byDivision = withDrops(built.byDivision);
 
   return {
     data: {
@@ -147,6 +158,7 @@ export async function loadSeasonStandings(
       eventCount: races.length,
       races,
       memberCount: members.length,
+      drops,
       ridersRaced: racedIds.size,
       membersRaced,
       classes,

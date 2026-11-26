@@ -47,7 +47,12 @@ export type Standing = {
   riderId: string;
   riderName: string;
   riderNumber: string | null;
+  /** Counted points (after drops, when drops apply). */
   points: number;
+  /** Points from every race, before drops. */
+  rawPoints?: number;
+  /** Race ids whose result was dropped (missed races included). */
+  dropped?: string[];
   events: number;
   wins: number;
   rank: number;
@@ -186,4 +191,34 @@ export function buildStandings({
     ) as Record<string, Standing[]>;
 
   return { byClass: rank(byClass), byDivision: rank(byDivision) };
+}
+
+/**
+ * Drops: each rider's lowest `drops` results in the season don't count, and a
+ * missed race counts as a 0 (so missed races are dropped first). Only the best
+ * (races held - drops) results are added up. If fewer races than `drops` have
+ * been held, nothing is dropped yet.
+ *
+ * Which equal results get dropped doesn't change totals; for display, missed
+ * races go first, then the lowest points, then the earliest race.
+ */
+export function applyDrops(standings: Standing[], seasonRaceIds: string[], drops: number): Standing[] {
+  const counted = seasonRaceIds.length - drops;
+  if (drops <= 0 || counted <= 0) {
+    return standings.map((s) => ({ ...s, rawPoints: s.points, dropped: [] }));
+  }
+  const rows = standings.map((s) => {
+    const ordered = seasonRaceIds
+      .map((id, index) => ({ id, index, points: s.races[id]?.points ?? 0, missed: !s.races[id] }))
+      .sort((a, b) => Number(b.missed) - Number(a.missed) || a.points - b.points || a.index - b.index);
+    const droppedRaces = ordered.slice(0, drops);
+    const kept = ordered.slice(drops);
+    return {
+      ...s,
+      rawPoints: s.points,
+      points: kept.reduce((sum, r) => sum + r.points, 0),
+      dropped: droppedRaces.map((r) => r.id),
+    };
+  });
+  return rankStandings(rows);
 }

@@ -14,6 +14,8 @@ type Props = {
   races: SeasonRace[];
   standingsByClass: Record<string, Standing[]>;
   standingsByDivision: Record<string, Standing[]>;
+  /** Lowest results dropped from each season total (0 = none). */
+  drops?: number;
 };
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -35,6 +37,8 @@ function forRaces(standings: Standing[], raceIds: string[], countWins: (r: RaceR
       return {
         ...s,
         points: picked.reduce((sum, r) => sum + r.points, 0),
+        rawPoints: undefined,
+        dropped: [],
         events: picked.length,
         wins: picked.filter(countWins).length,
       };
@@ -43,7 +47,7 @@ function forRaces(standings: Standing[], raceIds: string[], countWins: (r: RaceR
   return rankStandings(rows);
 }
 
-export default function StandingsBoard({ classes, divisions, races, standingsByClass, standingsByDivision }: Props) {
+export default function StandingsBoard({ classes, divisions, races, standingsByClass, standingsByDivision, drops = 0 }: Props) {
   const hasDivisions = divisions.length > 0;
   const [division, setDivision] = useState(
     () => divisions.find((d) => d.name.toLowerCase().startsWith("a"))?.id ?? divisions[0]?.id ?? "",
@@ -139,8 +143,10 @@ export default function StandingsBoard({ classes, divisions, races, standingsByC
                 <h2 className="text-xl font-black uppercase tracking-tight">{t.title}</h2>
                 <p className="mt-1 text-sm text-neutral-400">
                   {allRaces
-                    ? `${t.isDivision ? "Division" : "Class"} points from every race. Ties go to the rider with more wins.`
-                    : `${t.isDivision ? "Division" : "Class"} points for the selected races only.`}
+                    ? `${t.isDivision ? "Division" : "Class"} points${
+                        drops > 0 ? `, best results only — each rider's ${drops} lowest (missed races count as 0) are dropped` : " from every race"
+                      }. Ties go to the rider with more wins.`
+                    : `${t.isDivision ? "Division" : "Class"} points for the selected races only (no drops).`}
                 </p>
               </div>
               <p className="text-xs font-bold uppercase tracking-[0.2em] text-neutral-500">
@@ -366,14 +372,26 @@ function SeasonTable({ standings, races }: { standings: Standing[]; races: Seaso
                     {s.riderNumber && <div className="text-xs text-neutral-500">#{s.riderNumber}</div>}
                   </div>
                 </td>
-                {races.map((r) => (
-                  <td key={r.id} className="px-3 py-3 text-center group-hover:bg-white/[0.02]">
-                    <RaceCell result={s.races[r.id]} />
-                  </td>
-                ))}
+                {races.map((r) => {
+                  const dropped = s.dropped?.includes(r.id);
+                  return (
+                    <td
+                      key={r.id}
+                      title={dropped ? "Dropped — doesn't count toward the total" : undefined}
+                      className={`px-3 py-3 text-center group-hover:bg-white/[0.02] ${dropped ? "opacity-35 [&_div:first-child]:line-through" : ""}`}
+                    >
+                      <RaceCell result={s.races[r.id]} />
+                    </td>
+                  );
+                })}
                 <td className="px-4 py-3 text-center font-semibold text-neutral-300 group-hover:bg-white/[0.02]">{s.wins}</td>
-                <td className="px-4 py-3 text-right text-lg font-black text-lime-400 group-hover:bg-white/[0.02]">
-                  {s.points}
+                <td className="px-4 py-3 text-right group-hover:bg-white/[0.02]">
+                  <div className="text-lg font-black text-lime-400">{s.points}</div>
+                  {s.rawPoints !== undefined && s.rawPoints !== s.points && (
+                    <div className="text-[11px] font-semibold text-neutral-500" title="Points from every race, before drops">
+                      {s.rawPoints} all races
+                    </div>
+                  )}
                 </td>
               </tr>
             );

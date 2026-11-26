@@ -41,6 +41,7 @@ async function JuniorStandings() {
         races={data.races}
         standingsByClass={data.byClass}
         standingsByDivision={{}}
+        drops={data.drops}
       />
     </div>
   );
