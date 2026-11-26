@@ -143,6 +143,15 @@ export default function RaceCalendar({ events }: RaceCalendarProps) {
     )
     .sort((a, b) => a.race_date.localeCompare(b.race_date));
 
+  // The next race or event from today on (any month).
+  const nextEvent = useMemo(() => {
+    const now = new Date();
+    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+    return [...events]
+      .filter((e) => e.race_date && getDateKey(e.race_date) >= today)
+      .sort((a, b) => a.race_date.localeCompare(b.race_date))[0];
+  }, [events]);
+
   function changeMonth(direction: -1 | 1) {
     const nextDate = new Date(
       Date.UTC(year, month - 1 + direction, 1)
@@ -377,6 +386,38 @@ export default function RaceCalendar({ events }: RaceCalendarProps) {
                     </article>
                   );
                 })}
+              </div>
+            )}
+
+            {nextEvent && (
+              <div className="mt-6 border-t border-white/10 pt-5">
+                <p className="mb-3 text-xs font-bold uppercase tracking-[0.25em] text-lime-400">Next event</p>
+                <Link
+                  href={nextEvent.kind === "event" ? (nextEvent.href ?? "/") : `/results/${nextEvent.id}`}
+                  className={`block rounded-xl border p-4 transition ${
+                    nextEvent.kind === "event"
+                      ? "border-amber-400/30 bg-amber-400/5 hover:border-amber-400"
+                      : "border-lime-400/30 bg-lime-400/5 hover:border-lime-400"
+                  }`}
+                >
+                  <span suppressHydrationWarning className="block text-sm font-bold text-neutral-300">
+                    {formatDay(nextEvent.race_date)}, {nextEvent.race_date.slice(0, 4)}
+                  </span>
+                  <span className="mt-1 block text-lg font-black text-white">{nextEvent.name}</span>
+                  <span className="mt-1 block text-sm text-neutral-400">{getEventLocation(nextEvent)}</span>
+                  <span className={`mt-2 block text-sm font-bold ${nextEvent.kind === "event" ? "text-amber-300" : "text-lime-400"}`}>
+                    {nextEvent.kind === "event" ? (nextEvent.linkText ?? "Details →") : "Race details →"}
+                  </span>
+                </Link>
+                {getMonthKey(nextEvent.race_date) !== displayedMonth && (
+                  <button
+                    type="button"
+                    onClick={() => setSelectedMonth(getMonthKey(nextEvent.race_date))}
+                    className="mt-2 text-xs font-bold uppercase tracking-wider text-neutral-400 hover:text-lime-300"
+                  >
+                    Show {formatMonth(getMonthKey(nextEvent.race_date))} on the calendar
+                  </button>
+                )}
               </div>
             )}
           </div>

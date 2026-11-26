@@ -16,8 +16,8 @@ export const SITE_EVENTS: SiteEvent[] = [
   {
     id: "banquet-2026",
     name: "RMEC Awards Banquet",
-    date: null, // e.g. "2026-12-12"
-    location: null,
+    date: "2027-01-30",
+    location: "136 S Main St, Longmont, CO 80501",
     href: "/banquet",
     linkText: "Banquet sign-up →",
   },
