@@ -122,6 +122,11 @@ def result_status(r: dict) -> dict:
 # LiveLaps result ids to skip entirely, with a note on why.
 IGNORE_RESULTS = {
     4774782: "Collin Heath listed twice in A 30+ at Shady Burro day 2; this entry has no scores",
+    # LTR Day 1 (race 80366): two riders are listed twice in AA with full scores. The second
+    # copies have hand-typed times (whole seconds); the first ones are the timing entries,
+    # and LiveLaps' own series standings use those.
+    4585724: "James D Buck listed twice in AA at LTR Day 1; duplicate with hand-typed time",
+    4586596: "Scott Forstrom listed twice in AA at LTR Day 1; duplicate with hand-typed time",
 }
 
 
@@ -497,9 +502,12 @@ def rerank_merged_classes(raw: list[dict], rows: list[dict], log=print) -> None:
     """When several promoter classes map to one RMEC class (e.g. Concho's two
     16-and-under classes -> "16 or Under"), each arrives with its own 1st, 2nd...
     Re-rank the combined class so it has one set of places, using a ranking the
-    riders share: overall position, or else group position within one group.
-    Both only count when every rider comes from the same results link. Riders
-    with DNS/DNF/DQ go last. If there's no shared ranking, stop."""
+    riders share: overall position, or else group position within one group, or
+    else most sections then the shortest total time. These only count when every
+    rider comes from the same results link.
+    Finishers come first. DNFs that still score (a scored section, rulebook 7.5 B)
+    follow, by most sections then shortest time. DNS / DQ / non-scoring DNFs get no
+    place. If there's no shared ranking, stop."""
     groups: dict = {}
     for r, row in zip(raw, rows):
         groups.setdefault(row["class_id"], []).append((r, row))
@@ -510,24 +518,32 @@ def rerank_merged_classes(raw: list[dict], rows: list[dict], log=print) -> None:
         names = sorted({str(r.get("className")) for r, _ in entries})
         finished = [(r, row) for r, row in entries
                     if not (row["dns"] or row["dnf"] or row["disqualified"])]
-        links = {r.get("_livelaps_race") for r, _ in finished}
+        scoring_dnf = [(r, row) for r, row in entries
+                       if row["dnf"] and not row["disqualified"] and (row.get("sections_completed") or 0) >= 1]
+        links = {r.get("_livelaps_race") for r, _ in finished + scoring_dnf}
+
+        def by_sections_and_time(e):
+            r, row = e
+            secs = _seconds(r.get("totalCumulatedTime"))
+            return (-(_int_or_none(r.get("sectionsCompleted")) or 0), secs if secs is not None else float("inf"),
+                    row["position"] or 999)
+
         rank = None
         if len(links) <= 1:
-            if all(row["overall_position"] is not None for _, row in finished):
+            if finished and all(row["overall_position"] is not None for _, row in finished):
                 rank = {id(row): (row["overall_position"], row["position"] or 999) for _, row in finished}
                 how = "overall position"
             else:
                 grps = {r.get("classGroup") for r, _ in finished}
-                if len(grps) == 1 and None not in grps and all(_int_or_none(r.get("groupPosition")) for r, _ in finished):
+                if len(grps) == 1 and None not in grps and "" not in grps and all(
+                        _int_or_none(r.get("groupPosition")) for r, _ in finished):
                     rank = {id(row): (_int_or_none(r.get("groupPosition")), row["position"] or 999) for r, row in finished}
                     how = f"group position ({grps.pop()})"
-                elif all(_int_or_none(r.get("sectionsCompleted")) is not None and _seconds(r.get("totalCumulatedTime")) is not None
-                         for r, _ in finished):
-                    # No shared ranking at all (e.g. class-only youth pages): hare-scramble order,
-                    # most laps first, then the shorter total time.
-                    rank = {id(row): (-_int_or_none(r.get("sectionsCompleted")), _seconds(r.get("totalCumulatedTime")))
-                            for r, row in finished}
-                    how = "laps, then total time"
+                elif all(_int_or_none(r.get("sectionsCompleted")) is not None for r, _ in finished):
+                    # No shared ranking (e.g. Sportsman + Trail Rider, class-only youth pages):
+                    # most sections first, then the shorter total time.
+                    rank = {id(row): by_sections_and_time((r, row)) for r, row in finished}
+                    how = "sections, then total time"
         if rank is None:
             why = ("they come from different results links" if len(links) > 1
                    else "they have no overall or group position in common (likely a different course or group)")
@@ -535,13 +551,16 @@ def rerank_merged_classes(raw: list[dict], rows: list[dict], log=print) -> None:
                 f"Can't combine {', '.join(names)} into one class: {why}. "
                 "In importer/class_map.csv, map one of them to a different RMEC class or to SKIP.")
         finished.sort(key=lambda e: rank[id(e[1])])
-        for place, (_, row) in enumerate(finished, start=1):
+        scoring_dnf.sort(key=by_sections_and_time)
+        placed = finished + scoring_dnf
+        for place, (_, row) in enumerate(placed, start=1):
             row["position"] = place
-        done = {id(row) for _, row in finished}
+        done = {id(row) for _, row in placed}
         for _, row in entries:
             if id(row) not in done:
                 row["position"] = None
-        log(f"  Combined {', '.join(names)} into one class and re-ranked {len(finished)} finishers by {how}")
+        dnf_note = f" (+{len(scoring_dnf)} scoring DNF)" if scoring_dnf else ""
+        log(f"  Combined {', '.join(names)} into one class and re-ranked {len(finished)} finishers{dnf_note} by {how}")
 
 
 # ---------------------------------------------------------------- data access
@@ -552,15 +571,17 @@ class LiveStore:
     def __init__(self, db, dry_run: bool):
         self.db, self.dry_run = db, dry_run
 
-    def events_to_process(self):
+    def events_to_process(self, include_processed=False):
         today = date.today().isoformat()
-        return self.db.select("events", {
+        params = {
             "select": "*",
-            "or": "(processed.is.false,processed.is.null)",
             "race_date": f"lt.{today}",
             "results_url": "not.is.null",
             "order": "race_date.asc",
-        })
+        }
+        if not include_processed:
+            params["or"] = "(processed.is.false,processed.is.null)"
+        return self.db.select("events", params)
 
     def event(self, event_id):
         rows = self.db.select("events", {"select": "*", "id": f"eq.{event_id}"})
@@ -667,10 +688,11 @@ class CsvStore:
                 rows.append(clean)
             return rows
 
-    def events_to_process(self):
+    def events_to_process(self, include_processed=False):
         today = date.today().isoformat()
         return [e for e in self.tables["events"]
-                if not e.get("processed") and e.get("results_url") and str(e.get("race_date")) < today]
+                if (include_processed or not e.get("processed")) and e.get("results_url")
+                and str(e.get("race_date")) < today]
 
     def event(self, event_id):
         return next((e for e in self.tables["events"] if e["id"] == event_id), None)

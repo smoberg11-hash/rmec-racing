@@ -42,6 +42,7 @@ async function JuniorStandings() {
         standingsByClass={data.byClass}
         standingsByDivision={{}}
         drops={data.drops}
+        creditsLoaded={data.creditsLoaded}
       />
     </div>
   );

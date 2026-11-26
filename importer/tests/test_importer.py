@@ -22,7 +22,8 @@ def res(rid, class_id, pos, overall, standing="Scored", **flags):
     return {"id": rid, "event_id": EVENT, "rider_id": f"rider-{rid}", "class_id": class_id,
             "position": pos, "overall_position": overall, "standing": standing,
             "dns": flags.get("dns", False), "dnf": flags.get("dnf", False),
-            "disqualified": flags.get("dq", False), "points": None, "division_points": None}
+            "disqualified": flags.get("dq", False), "points": None, "division_points": None,
+            "sections_completed": flags.get("sections")}
 
 
 class PointsTable(unittest.TestCase):
@@ -64,6 +65,26 @@ class Scoring(unittest.TestCase):
 
         bad = self.run_calc([res("a", "a-open", 2, 2), res("c", "a-open", 1, 1, standing="DNF", dnf=True)])
         self.assertFalse(bad["valid"])
+
+    def test_dnf_with_a_scored_section_gets_class_place_points(self):
+        # Rulebook 7.5 B: a DNF with a valid first check still scores by its class place.
+        out = self.run_calc([res("a", "a-open", 1, 2), res("b", "a-open", 2, 3),
+                             res("c", "a-open", 3, 4, standing="DNF", dnf=True, sections=4),
+                             res("d", "a-open", 4, None, standing="DNF", dnf=True, sections=1),
+                             res("e", "a-open", 5, None, standing="DNF", dnf=True, sections=0),
+                             res("w", "a-30", 1, 1)])
+        self.assertTrue(out["valid"], out["errors"])
+        p = self.by_id(out)
+        self.assertEqual([p[k]["points"] for k in "abcde"], [30, 25, 21, 18, 0])
+        # c has an overall position, so it gets division points; d has none, so class points only.
+        self.assertEqual((p["c"]["division_points"], p["d"]["division_points"]), (18, 0))
+        self.assertTrue(any("no overall_position" in w for w in out["warnings"]))
+        self.assertEqual(out["summary"]["scoring_dnf"], 2)
+
+    def test_dq_never_scores_even_with_sections(self):
+        out = self.run_calc([res("a", "a-open", 1, 1), res("b", "a-open", None, None, standing="DQ", dq=True, sections=5)])
+        self.assertTrue(out["valid"], out["errors"])
+        self.assertEqual(self.by_id(out)["b"]["points"], 0)
 
     def test_division_d_and_juniors_get_no_division_points(self):
         out = self.run_calc([res("d1", "d-vet", 1, 1), res("j1", "jr", 1, None)])
@@ -304,6 +325,23 @@ class MergedClasses(unittest.TestCase):
         pipeline.rerank_merged_classes(raw, rows, log=lambda *_: None)
         self.assertEqual([r["position"] for r in rows], [1, 3, 2, None])
 
+    def test_sportsman_and_trail_rider_merge_by_sections_then_time(self):
+        # LTR Day 2: Sportsman has a group position, Trail Rider has none, so there is
+        # no shared ranking; most sections then shortest time decides. A DNF with a
+        # scored section goes after the finishers; one with none gets no place.
+        def r(cls, pos, secs, time, dnf=False, gp=None):
+            return ({"className": cls, "classGroup": "C" if gp else "", "groupPosition": gp,
+                     "sectionsCompleted": secs, "totalCumulatedTime": time},
+                    {"class_id": "sp", "position": pos, "overall_position": None, "dns": False, "dnf": dnf,
+                     "disqualified": False, "sections_completed": secs})
+        pairs = [r("Sportsman", 1, 10, "02:07:13.450", gp=16), r("Sportsman", 2, 10, "02:16:14.857", gp=32),
+                 r("Trail Rider", 1, 10, "02:01:14.291"), r("Trail Rider", 2, 2, "00:30:57.209"),
+                 r("Trail Rider", 3, 1, ""), r("Trail Rider", 4, 6, "02:12:36.143", dnf=True),
+                 r("Trail Rider", 5, 0, "", dnf=True)]
+        raw, rows = [p[0] for p in pairs], [p[1] for p in pairs]
+        pipeline.rerank_merged_classes(raw, rows, log=lambda *_: None)
+        self.assertEqual([x["position"] for x in rows], [2, 3, 1, 4, 5, 6, None])
+
 
 class GroupPositions(unittest.TestCase):
     def setUp(self):
@@ -438,3 +476,15 @@ class DuplicateRiderPrevention(unittest.TestCase):
         merges, unsure = merge_riders.plan(riders)
         self.assertEqual([(k["id"], [d["id"] for d in ds]) for k, ds in merges], [("ll", ["mt"])])
         self.assertEqual(unsure, [("Sam Lee", 2)])
+
+    def test_merge_plan_follows_aliases(self):
+        from importer import merge_riders
+        riders = [{"id": "rob", "full_name": "Rob Reed", "livelaps_id": 7},
+                  {"id": "robert", "full_name": "Robert Reed", "livelaps_id": None},
+                  {"id": "k1", "full_name": "Kris Brunson", "livelaps_id": 8},
+                  {"id": "k2", "full_name": "Kristopher Brunson", "livelaps_id": 9}]
+        aliases = {"robert reed": "rob reed", "kris brunson": "kristopher brunson"}
+        merges, unsure = merge_riders.plan(riders, aliases)
+        self.assertEqual([(k["id"], [d["id"] for d in ds]) for k, ds in merges], [("rob", ["robert"])])
+        # Two LiveLaps accounts: merging would come back on the next import, so it is left for a person.
+        self.assertEqual(unsure, [("Kris Brunson", 2)])

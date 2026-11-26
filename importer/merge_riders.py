@@ -9,6 +9,10 @@ LiveLaps id: their results and membership history move to the LiveLaps rider,
 membership details are kept if the LiveLaps rider has none, and the empty
 duplicates are deleted. Names with two LiveLaps riders (two different LiveLaps
 accounts) are listed for a person to sort out, and nothing is changed for them.
+
+Riders with different names that are the same person are merged too, when
+importer/rider_aliases.csv says so: the rider named in `results_name` is merged
+into the rider named in `rider_name` (or `rider_id`).
 """
 
 from __future__ import annotations
@@ -18,13 +22,14 @@ import os
 import sys
 
 from .__main__ import load_env
-from .pipeline import normalize
+from .pipeline import load_rider_aliases, normalize
 from .supabase_client import Supabase, SupabaseError
 
 MEMBER_FIELDS = ("is_member", "membership_number", "membership_expiration")
 
 
-def plan(riders):
+def plan(riders, aliases=None):
+    """aliases: {normalized results name: rider id or normalized rider name}."""
     by_name: dict = {}
     for r in riders:
         n = normalize(r.get("full_name"))
@@ -42,6 +47,19 @@ def plan(riders):
             merges.append((without[0], without[1:]))
         else:
             unsure.append((group[0].get("full_name"), len(with_id)))
+
+    by_id = {r["id"]: r for r in riders}
+    merged = {d["id"] for _, dupes in merges for d in dupes}
+    for alias_name, target in sorted((aliases or {}).items()):
+        dupes = [r for r in by_name.get(alias_name, []) if r["id"] not in merged]
+        keep = [by_id[target]] if target in by_id else by_name.get(target, [])
+        if len(keep) != 1 or not dupes or keep[0]["id"] in {d["id"] for d in dupes}:
+            continue
+        if len(dupes) > 1 or (dupes[0].get("livelaps_id") not in (None, "") and keep[0].get("livelaps_id") not in (None, "")):
+            unsure.append((dupes[0].get("full_name"), sum(d.get("livelaps_id") not in (None, "") for d in dupes) + 1))
+            continue
+        merges.append((keep[0], dupes))
+        merged.add(dupes[0]["id"])
     return merges, unsure
 
 
@@ -61,7 +79,7 @@ def main(argv=None):
         print(f"Error: {e}", file=sys.stderr)
         return 2
 
-    merges, unsure = plan(riders)
+    merges, unsure = plan(riders, load_rider_aliases())
     print("MODE:", "APPLY — changes will be saved" if args.apply else "DRY RUN — nothing will be saved")
     print(f"{len(merges)} duplicate riders to merge:")
     for keep, dupes in merges:
@@ -92,6 +110,11 @@ def main(argv=None):
                 if theirs:
                     db.update("results", {"rider_id": f"eq.{d['id']}"}, {"rider_id": keep["id"]})
                 db.update("membership_history", {"rider_id": f"eq.{d['id']}"}, {"rider_id": keep["id"]})
+                try:  # worker points / eligibility follow the rider (table from importer/credits.sql)
+                    db.update("rider_credits", {"rider_id": f"eq.{d['id']}"}, {"rider_id": keep["id"]})
+                except SupabaseError as e:
+                    if "rider_credits" not in str(e):
+                        raise
                 if not keep.get("is_member") and d.get("is_member"):
                     db.update("riders", {"id": f"eq.{keep['id']}"}, {k: d.get(k) for k in MEMBER_FIELDS})
                 db.delete("riders", {"id": f"eq.{d['id']}"})

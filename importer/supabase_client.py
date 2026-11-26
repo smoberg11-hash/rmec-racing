@@ -53,7 +53,11 @@ class Supabase:
                 raise SupabaseError(f"{method} {table} failed: {e.reason}") from None
 
     def select(self, table, params=None, page_size=1000):
-        """Read all matching rows, paging past Supabase's 1000-row limit."""
+        """Read all matching rows, paging past Supabase's 1000-row limit.
+        Pages need a stable order or rows can be skipped or repeated between pages,
+        so tables are ordered by id unless the caller gives an order."""
+        params = dict(params or {})
+        params.setdefault("order", "id")
         rows, start = [], 0
         while True:
             batch, _ = self._request(

@@ -1,11 +1,11 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import type { RaceResult, Standing } from "@/lib/standings";
+import { rankStandings, type RaceResult, type Standing } from "@/lib/standings";
 import type { SeasonRace } from "@/lib/standings-data";
 
 type RaceClass = { id: string; name: string; division_id: string | null };
-type Division = { id: string; name: string };
+type Division = { id: string; name: string; has_annual_points?: boolean };
 
 type Props = {
   classes: RaceClass[];
@@ -16,6 +16,8 @@ type Props = {
   standingsByDivision: Record<string, Standing[]>;
   /** Lowest results dropped from each season total (0 = none). */
   drops?: number;
+  /** Whether worker points / eligibility are available yet (rider_credits table). */
+  creditsLoaded?: boolean;
 };
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -29,20 +31,38 @@ function shortDate(date: string | null) {
 
 const DIVISION_ALL = "division";
 
-export default function StandingsBoard({ classes, divisions, races, standingsByClass, standingsByDivision, drops = 0 }: Props) {
+export default function StandingsBoard({
+  classes,
+  divisions,
+  races,
+  standingsByClass,
+  standingsByDivision,
+  drops = 0,
+  creditsLoaded = true,
+}: Props) {
   const hasDivisions = divisions.length > 0;
+  // Membership standings: every member. Trophy standings: only riders with an E (rulebook 7.3:
+  // everyone else moves up to fill the places).
+  const [trophy, setTrophy] = useState(false);
+  const raceOrder = races.map((r) => r.id);
   const [division, setDivision] = useState(
     () => divisions.find((d) => d.name.toLowerCase().startsWith("a"))?.id ?? divisions[0]?.id ?? "",
   );
-  // Which standings to show. Adult: starts with the division overall only. Junior: every class.
-  const [views, setViews] = useState<string[]>(() => (hasDivisions ? [DIVISION_ALL] : classes.map((c) => c.id)));
+  // A division without annual points (D) has no overall standing, only its classes.
+  const hasOverall = (id: string) => divisions.find((d) => d.id === id)?.has_annual_points !== false;
+  const startViews = (id: string) =>
+    hasOverall(id) ? [DIVISION_ALL] : classes.filter((c) => c.division_id === id).map((c) => c.id);
+  // Which standings to show. Adult: starts with the division overall only (all classes in D). Junior: every class.
+  const [views, setViews] = useState<string[]>(() => (hasDivisions ? startViews(division) : classes.map((c) => c.id)));
   // null = all races; otherwise the ids that are ticked.
   const [picked, setPicked] = useState<string[] | null>(null);
 
   const divisionName = divisions.find((d) => d.id === division)?.name ?? "Division";
   const classOptions = hasDivisions ? classes.filter((c) => c.division_id === division) : classes;
   const viewOptions = [
-    ...(hasDivisions ? [{ id: DIVISION_ALL, primary: `${divisionName} overall`, secondary: "Division points" }] : []),
+    ...(hasDivisions && hasOverall(division)
+      ? [{ id: DIVISION_ALL, primary: `${divisionName} overall`, secondary: "Division points" }]
+      : []),
     ...classOptions.map((c) => ({ id: c.id, primary: c.name })),
   ];
   const shownViews = viewOptions.map((o) => o.id).filter((id) => views.includes(id));
@@ -51,7 +71,10 @@ export default function StandingsBoard({ classes, divisions, races, standingsByC
     id,
     isDivision: id === DIVISION_ALL,
     title: id === DIVISION_ALL ? `${divisionName} overall` : classes.find((c) => c.id === id)?.name ?? "Class",
-    full: (id === DIVISION_ALL ? standingsByDivision[division] : standingsByClass[id]) ?? [],
+    full: (() => {
+      const rows = (id === DIVISION_ALL ? standingsByDivision[division] : standingsByClass[id]) ?? [];
+      return trophy ? rankStandings(rows.filter((s) => s.eligible), raceOrder) : rows;
+    })(),
   }));
 
   // Races anyone in the shown standings rode, oldest first.
@@ -62,7 +85,7 @@ export default function StandingsBoard({ classes, divisions, races, standingsByC
 
   function chooseDivision(id: string) {
     setDivision(id);
-    setViews([DIVISION_ALL]);
+    setViews(startViews(id));
   }
 
   return (
@@ -90,13 +113,42 @@ export default function StandingsBoard({ classes, divisions, races, standingsByC
         </div>
       )}
 
+      <div className="flex flex-wrap items-center gap-3">
+        <button
+          type="button"
+          onClick={() => setTrophy((t) => !t)}
+          aria-pressed={trophy}
+          disabled={!creditsLoaded}
+          className={`rounded-xl px-5 py-3 text-sm font-black uppercase tracking-wide transition disabled:cursor-not-allowed disabled:opacity-40 ${
+            trophy
+              ? "border border-white/15 bg-white/[0.04] text-neutral-200 hover:border-lime-400/60 hover:text-lime-300"
+              : "bg-lime-400 text-[#101211] shadow-[0_8px_24px_-10px_rgba(163,230,53,0.7)] hover:bg-lime-300"
+          }`}
+        >
+          {trophy ? "Membership standings" : "Year-end trophy standings"}
+        </button>
+        <p className="text-sm text-neutral-400">
+          {trophy ? (
+            <>
+              Showing <strong className="text-white">year-end trophy standings</strong>: only riders with an{" "}
+              <EBadge /> are ranked.
+            </>
+          ) : (
+            <>
+              Showing <strong className="text-white">membership standings</strong>: every member.{" "}
+              <EBadge /> = eligible for year-end awards (a member with 4+ races and worker points or eligibility).
+            </>
+          )}
+        </p>
+      </div>
+
       <div className="grid gap-4 rounded-2xl border border-white/10 bg-[#141816] p-5 sm:grid-cols-2">
         <MultiSelect
           label={hasDivisions ? "Standings" : "Classes"}
           options={viewOptions}
           selected={shownViews}
           onChange={(ids) => setViews(ids ?? viewOptions.map((o) => o.id))}
-          allText={(n) => (hasDivisions ? `Overall + all classes (${n})` : `All classes (${n})`)}
+          allText={(n) => (hasDivisions && hasOverall(division) ? `Overall + all classes (${n})` : `All classes (${n})`)}
           noun={hasDivisions ? "standings" : "classes"}
         />
         <MultiSelect
@@ -129,7 +181,7 @@ export default function StandingsBoard({ classes, divisions, races, standingsByC
                     drops > 0
                       ? ` — each rider's ${drops} lowest results (missed races count as 0) are dropped and shown crossed out`
                       : " from every race"
-                  }. Ties go to the rider with more wins.`}
+                  }. WP = worker points (average of the rider's best 3 results), in place of a missed or lowest race. Ties go to most overall wins, then class wins, then the last head-to-head.`}
                   {!allRaces && " Showing only the selected races; totals are for the whole season."}
                 </p>
               </div>
@@ -138,7 +190,9 @@ export default function StandingsBoard({ classes, divisions, races, standingsByC
               </p>
             </div>
             {t.full.length === 0 ? (
-              <p className="p-8 text-neutral-400">No standings for this class yet.</p>
+              <p className="p-8 text-neutral-400">
+                {trophy ? "Nobody in this class is eligible for a year-end trophy yet." : "No standings for this class yet."}
+              </p>
             ) : shownRaces.length === 0 ? (
               <p className="p-8 text-neutral-400">Nobody in this class rode the selected races.</p>
             ) : (
@@ -303,13 +357,39 @@ function RankBadge({ rank, tied }: { rank: number | null; tied?: boolean }) {
   );
 }
 
+function EBadge() {
+  return (
+    <span
+      title="Eligible for year-end awards"
+      className="inline-flex h-5 min-w-5 items-center justify-center rounded-md bg-sky-400 px-1 text-[11px] font-black text-[#101211]"
+    >
+      E
+    </span>
+  );
+}
+
 function RaceCell({ result }: { result: RaceResult | undefined }) {
   if (!result) return <span className="text-neutral-700">—</span>;
+  if (result.status === "WP") {
+    const was = result.replaced
+      ? `Worker points, in place of ${result.replaced.points} pts${result.replaced.status ? ` (${result.replaced.status})` : ""}`
+      : "Worker points, for a race not ridden";
+    return (
+      <div className="leading-tight" title={was}>
+        <div className="font-bold text-sky-300">{result.points}</div>
+        <div className="mt-0.5 text-[10px] font-bold uppercase tracking-wider text-sky-400">WP</div>
+      </div>
+    );
+  }
   return (
     <div className="leading-tight">
       <div className={`font-bold ${result.points > 0 ? "text-white" : "text-neutral-500"}`}>{result.points}</div>
-      {result.status ? (
+      {result.status && !(result.status === "DNF" && result.points > 0) ? (
         <div className="mt-0.5 text-[10px] font-bold uppercase tracking-wider text-red-300/80">{result.status}</div>
+      ) : result.status === "DNF" ? (
+        <div className="mt-0.5 text-[11px] font-semibold text-neutral-500" title="Did not finish, but scored by class place">
+          P{result.place ?? "?"} <span className="text-[10px] font-bold uppercase text-red-300/80">DNF</span>
+        </div>
       ) : result.place ? (
         <div className={`mt-0.5 text-[11px] font-semibold ${result.place <= 3 ? "text-lime-400" : "text-neutral-500"}`}>
           P{result.place}
@@ -330,6 +410,7 @@ function SeasonTable({ standings, races }: { standings: Standing[]; races: Seaso
           <tr className="border-b border-white/10 text-[11px] uppercase tracking-[0.15em] text-neutral-400">
             <th className={`${stickyRank} px-4 py-3`}>Rank</th>
             <th className={`${stickyRider} px-4 py-3`}>Rider</th>
+            <th className="px-2 py-3 text-center" title="Eligible for year-end awards">E</th>
             {races.map((r) => (
               <th key={r.id} className="px-3 py-3 text-center align-bottom font-semibold" title={r.name}>
                 <div className="font-black text-white">{shortDate(r.date)}</div>
@@ -355,6 +436,9 @@ function SeasonTable({ standings, races }: { standings: Standing[]; races: Seaso
                     <div className="truncate font-bold text-white">{s.riderName}</div>
                     {s.riderNumber && <div className="text-xs text-neutral-500">#{s.riderNumber}</div>}
                   </div>
+                </td>
+                <td className="px-2 py-3 text-center group-hover:bg-white/[0.02]">
+                  {s.eligible ? <EBadge /> : <span className="text-neutral-700">—</span>}
                 </td>
                 {races.map((r) => {
                   const dropped = s.dropped?.includes(r.id);

@@ -4,7 +4,11 @@ A line-by-line port of the "Calculate & Validate Points" node in the n8n
 "Calculate Race Points" workflow, so the rules match what was already built:
 
 * Points table: 30, 25, 21, 18, 16, 15, 14 ... 1 for 1st-20th; 0 after that.
-* DNS / DNF / disqualified results get 0 class and 0 division points.
+* DNS and disqualified results get 0 class and 0 division points.
+* A DNF still scores by its class place if the rider got a valid score at the
+  first timed check (sections_completed >= 1), has a class place, and was not disqualified
+  (RMEC rulebook 7.5 B). A DNF with no scored section gets 0 (7.5 C).
+  A scoring DNF with no overall position gets class points only.
 * Adult classes are classes with a division_id; classes without one are Junior.
 * Division points (only for divisions with has_annual_points) rank eligible
   riders in the division by LiveLaps overall_position, using the same table.
@@ -23,6 +27,13 @@ DIVISION_WINNER_POINTS = 36
 
 def table_points(place) -> int:
     return POINTS_TABLE.get(place, 0) if _pos_int(place) else 0
+
+
+def _int(v):
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return None
 
 
 def _pos_int(v) -> bool:
@@ -115,9 +126,11 @@ def calculate(event_id, results, event, classes, divisions, series, group_ranked
         if not status and standing and standing != "Scored":
             errors.append(f"{tag} has standing \"{standing}\" but no DNS/DNF/DQ flag (conflicting status).")
 
+        scores_as_dnf = (status == ["DNF"] and (_int(r.get("sections_completed")) or 0) >= 1
+                         and _pos_int(r.get("position")))
         recs.append({
             "r": r, "cls": cls, "div": div, "category": category, "status": status,
-            "eligible": not status,
+            "eligible": not status or scores_as_dnf, "scoring_dnf": scores_as_dnf,
             "annual": bool(div and div.get("has_annual_points") is True),
             "points": 0, "division_points": 0, "scoring_position": None,
             "division_rank": None, "is_division_winner": False,
@@ -168,7 +181,9 @@ def calculate(event_id, results, event, classes, divisions, series, group_ranked
     seen_overall = {}
     for x in recs:
         op = x["r"].get("overall_position")
-        if x["eligible"] and x["annual"] and not _pos_int(op):
+        if x["eligible"] and x["annual"] and not _pos_int(op) and x["scoring_dnf"]:
+            warnings.append(f"Scoring DNF result {x['r']['id']} has no overall_position; it gets class points but no division points.")
+        elif x["eligible"] and x["annual"] and not _pos_int(op):
             errors.append(f"Missing/invalid overall_position for eligible Adult result {x['r']['id']} (needed for division ranking).")
         if _pos_int(op) and x["div"]:
             key = (x["div"]["id"], op)
@@ -229,7 +244,7 @@ def calculate(event_id, results, event, classes, divisions, series, group_ranked
             "class_name": x["cls"]["name"] if x["cls"] else None,
             "category": x["category"],
             "division": x["div"]["name"] if x["div"] else None,
-            "status": "/".join(x["status"]) or "Eligible",
+            "status": ("/".join(x["status"]) + (" (scores)" if x["scoring_dnf"] else "")) or "Eligible",
             "position": x["r"].get("position"),
             "overall_position": x["r"].get("overall_position"),
             "is_division_winner": x["is_division_winner"],
@@ -250,6 +265,7 @@ def calculate(event_id, results, event, classes, divisions, series, group_ranked
         "junior": sum(x["category"] == "Junior" for x in recs),
         "division_winners": len(winners),
         "excluded_dns_dnf_dq": sum(not x["eligible"] for x in recs),
+        "scoring_dnf": sum(x["scoring_dnf"] for x in recs),
         "errors": len(errors),
         "warnings": len(warnings),
     }

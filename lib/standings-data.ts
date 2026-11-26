@@ -1,7 +1,15 @@
 import "server-only";
 
 import { selectPublicRows } from "@/lib/supabase/data";
-import { applyDrops, buildStandings, type Standing, type StandingResult } from "@/lib/standings";
+import {
+  applyDrops,
+  applyWorkerPoints,
+  buildStandings,
+  eventsRidden,
+  markEligibility,
+  type Standing,
+  type StandingResult,
+} from "@/lib/standings";
 
 /** Each rider's lowest results that don't count toward the season total (missed races count as 0). */
 export const SEASON_DROPS = { adult: 7, junior: 3 } as const;
@@ -28,6 +36,7 @@ type EventRow = { id: string; name: string; race_date: string | null };
 
 export type SeasonRace = { id: string; name: string; date: string | null };
 type Member = { id: string; full_name: string; rider_number: string | null };
+type Credit = { rider_id: string; season_id: string; kind: string };
 
 export type SeasonStandings = {
   season: Season;
@@ -37,6 +46,10 @@ export type SeasonStandings = {
   memberCount: number;
   /** Number of lowest results dropped from each rider's season total. */
   drops: number;
+  /** Members in these standings who have earned eligibility ("E"). */
+  eligibleCount: number;
+  /** False until the rider_credits table exists (then nobody can have an E yet). */
+  creditsLoaded: boolean;
   /** Riders with results in these classes this season, and how many of them are members. */
   ridersRaced: number;
   membersRaced: number;
@@ -106,10 +119,13 @@ export async function loadSeasonStandings(
         a.name.localeCompare(b.name),
     );
 
+  // Every division with classes this season gets a tab (D has class points only, no
+  // division standing: rulebook 7.12 / 7.13).
+  const seasonDivisionIds = new Set(classes.map((c) => c.division_id).filter(Boolean));
   const divisions =
     kind === "adult"
       ? (divisionsRes.data ?? [])
-          .filter((d) => d.has_annual_points)
+          .filter((d) => seasonDivisionIds.has(d.id))
           .sort((a, b) => a.display_order - b.display_order || a.name.localeCompare(b.name))
       : [];
 
@@ -139,18 +155,44 @@ export async function loadSeasonStandings(
   const racedIds = new Set(results.map((r) => r.rider_id));
   const membersRaced = [...racedIds].filter((id) => memberIds.has(id)).length;
 
-  const built = buildStandings({
-    results,
-    members,
-    classes,
-    annualDivisionIds: new Set(divisions.map((d) => d.id)),
-  });
-  const drops = SEASON_DROPS[kind];
   const raceIds = races.map((r) => r.id);
-  const withDrops = (groups: Record<string, Standing[]>) =>
-    Object.fromEntries(Object.entries(groups).map(([id, rows]) => [id, applyDrops(rows, raceIds, drops)]));
-  const byClass = withDrops(built.byClass);
-  const byDivision = withDrops(built.byDivision);
+  const annualDivisionIds = new Set(divisions.filter((d) => d.has_annual_points).map((d) => d.id));
+  const built = buildStandings({ results, members, classes, annualDivisionIds, raceOrder: raceIds });
+
+  // Worker points and eligibility (rider_credits). If the table isn't there yet,
+  // the standings still load, just without WP or E.
+  const creditsRes = await selectPublicRows<Credit>("public_rider_credits", "rider_id, season_id, kind", {
+    equals: { column: "season_id", value: season.id },
+  });
+  const credits = creditsRes.error ? [] : (creditsRes.data ?? []);
+  const ridden = eventsRidden(results);
+  const credited = new Set(credits.map((c) => c.rider_id));
+  const workerCredits = new Map<string, number>();
+  // Worker points are for the adult series only (rulebook 5.11).
+  if (kind === "adult") {
+    for (const c of credits) {
+      if (c.kind === "worker_points") workerCredits.set(c.rider_id, (workerCredits.get(c.rider_id) ?? 0) + 1);
+    }
+  }
+  const withWorkerPoints = applyWorkerPoints({
+    byClass: built.byClass,
+    byDivision: built.byDivision,
+    classDivision: new Map(
+      classes.map((c) => [c.id, c.division_id && annualDivisionIds.has(c.division_id) ? c.division_id : null]),
+    ),
+    workerCredits,
+    ridden,
+    seasonRaceIds: raceIds,
+  });
+
+  const drops = SEASON_DROPS[kind];
+  const finish = (groups: Record<string, Standing[]>) =>
+    Object.fromEntries(
+      Object.entries(groups).map(([id, rows]) => [id, markEligibility(applyDrops(rows, raceIds, drops), credited, ridden)]),
+    );
+  const byClass = finish(withWorkerPoints.byClass);
+  const byDivision = finish(withWorkerPoints.byDivision);
+  const eligibleCount = members.filter((m) => credited.has(m.id) && (ridden.get(m.id) ?? 0) >= 4 && racedIds.has(m.id)).length;
 
   return {
     data: {
@@ -159,6 +201,8 @@ export async function loadSeasonStandings(
       races,
       memberCount: members.length,
       drops,
+      eligibleCount,
+      creditsLoaded: !creditsRes.error,
       ridersRaced: racedIds.size,
       membersRaced,
       classes,

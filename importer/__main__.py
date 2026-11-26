@@ -6,6 +6,7 @@ Usage (run from the rmec-racing folder):
   python3 -m importer --apply              # import + score every unprocessed event for real
   python3 -m importer --event <uuid>       # just one event (even if already processed)
   python3 -m importer --event <uuid> --apply
+  python3 -m importer --all --replace      # every past event again (after a rule or class-map change)
 
 Offline testing with CSV exports of the database (always a dry run):
 
@@ -97,6 +98,9 @@ def main(argv=None):
     ap = argparse.ArgumentParser(prog="python3 -m importer", description="Import LiveLaps results into Supabase and score them.")
     ap.add_argument("--apply", action="store_true", help="actually write to the database (default is a dry run)")
     ap.add_argument("--event", help="import only this event id")
+    ap.add_argument("--all", action="store_true",
+                    help="re-import and re-score every past event, processed or not (after a scoring rule or "
+                         "class_map.csv change)")
     ap.add_argument("--offline", metavar="FOLDER", help="use CSV exports in FOLDER instead of Supabase (dry run only)")
     ap.add_argument("--results-file", help="read LiveLaps results from a saved JSON file instead of the API")
     ap.add_argument("--report", metavar="FOLDER", help="write a points CSV per event into FOLDER")
@@ -134,7 +138,7 @@ def main(argv=None):
                 return 2
             events = [ev]
         else:
-            events = store.events_to_process()
+            events = store.events_to_process(include_processed=args.all)
     except SupabaseError as e:
         print(f"Error reading events: {e}", file=sys.stderr)
         return 2
@@ -145,8 +149,10 @@ def main(argv=None):
     if args.results_file and len(events) != 1:
         ap.error("--results-file needs --event (it holds one race).")
 
-    if args.replace and not args.event:
-        ap.error("--replace only works together with --event <id>, so it can't remove results from other races by accident.")
+    if args.replace and not (args.event or args.all):
+        ap.error("--replace only works together with --event <id> or --all, so it can't remove results by accident.")
+    if args.all and args.event:
+        ap.error("Use either --all or --event, not both.")
     if args.find_classes:
         return find_classes(store, events)
 

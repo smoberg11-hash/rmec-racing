@@ -10,6 +10,7 @@ export const publicTables = [
   "divisions",
   "events",
   "member_standings_riders",
+  "public_rider_credits",
   "public_riders",
   "results",
   "seasons",

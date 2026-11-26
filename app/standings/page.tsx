@@ -39,6 +39,7 @@ async function AdultStandings() {
         standingsByClass={data.byClass}
         standingsByDivision={data.byDivision}
         drops={data.drops}
+        creditsLoaded={data.creditsLoaded}
       />
     </div>
   );
