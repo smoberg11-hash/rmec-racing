@@ -227,13 +227,13 @@ export default function HomePage() {
                   href="/standings"
                   className="font-bold text-lime-400 hover:text-lime-300"
                 >
-                  Explore adult standings →
+                  Explore Adult standings →
                 </Link>
                 <Link
                   href="/standings/junior"
                   className="font-bold text-lime-400 hover:text-lime-300"
                 >
-                  Explore junior standings →
+                  Explore JR standings →
                 </Link>
               </div>
             </div>
