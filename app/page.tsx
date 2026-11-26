@@ -192,13 +192,6 @@ export default function HomePage() {
               </Link>
 
               <Link
-                href="/standings"
-                className="rounded-lg border border-white/20 px-5 py-3 font-bold text-white transition hover:border-lime-400 hover:text-lime-400"
-              >
-                Championship Standings
-              </Link>
-
-              <Link
                 href="/join"
                 className="rounded-lg border border-lime-400/60 px-5 py-3 font-bold text-lime-300 transition hover:bg-lime-400 hover:text-black"
               >
@@ -229,12 +222,20 @@ export default function HomePage() {
             </p>
 
             <div className="mt-7 border-t border-white/10 pt-5">
-              <Link
-                href="/standings"
-                className="font-bold text-lime-400 hover:text-lime-300"
-              >
-                Explore the standings →
-              </Link>
+              <div className="flex flex-col gap-3">
+                <Link
+                  href="/standings"
+                  className="font-bold text-lime-400 hover:text-lime-300"
+                >
+                  Explore adult standings →
+                </Link>
+                <Link
+                  href="/standings/junior"
+                  className="font-bold text-lime-400 hover:text-lime-300"
+                >
+                  Explore junior standings →
+                </Link>
+              </div>
             </div>
           </div>
         </div>
