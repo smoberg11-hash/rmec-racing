@@ -12,6 +12,10 @@ export type CalendarEvent = {
   city: string | null;
   state: string | null;
   processed: boolean | null;
+  /** Non-race events (e.g. the banquet): their own link and colour, no results. */
+  kind?: "race" | "event";
+  href?: string;
+  linkText?: string;
 };
 
 type RaceCalendarProps = {
@@ -94,6 +98,17 @@ export default function RaceCalendar({ events }: RaceCalendarProps) {
 
   const [year, month] = displayedMonth.split("-").map(Number);
 
+  // Every month of the years that have events (Jan–Dec), plus whatever month is showing.
+  const monthOptions = (() => {
+    const years = new Set(availableMonths.map((m) => Number(m.slice(0, 4))));
+    years.add(year);
+    const list: string[] = [];
+    for (const y of [...years].sort()) {
+      for (let m = 1; m <= 12; m++) list.push(`${y}-${String(m).padStart(2, "0")}`);
+    }
+    return list;
+  })();
+
   const firstWeekday = new Date(
     Date.UTC(year, month - 1, 1)
   ).getUTCDay();
@@ -168,9 +183,32 @@ export default function RaceCalendar({ events }: RaceCalendarProps) {
             ←
           </button>
 
-          <span className="min-w-36 text-center font-bold text-white">
-            {formatMonth(displayedMonth)}
-          </span>
+          <label className="relative">
+            <span className="sr-only">Choose a month</span>
+            <select
+              value={displayedMonth}
+              onChange={(e) => setSelectedMonth(e.target.value)}
+              className="min-w-44 cursor-pointer appearance-none rounded-lg border border-white/15 bg-[#181d1a] py-2 pl-4 pr-9 text-center font-bold text-white transition hover:border-lime-400 focus:border-lime-400 focus:outline-none"
+            >
+              {monthOptions.map((m) => (
+                <option key={m} value={m}>
+                  {formatMonth(m)}
+                </option>
+              ))}
+            </select>
+            <svg
+              aria-hidden="true"
+              viewBox="0 0 20 20"
+              className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-lime-400"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M5 8l5 5 5-5" />
+            </svg>
+          </label>
 
           <button
             type="button"
@@ -222,6 +260,7 @@ export default function RaceCalendar({ events }: RaceCalendarProps) {
 
                 const dayEvents = eventsByDate[dateKey] ?? [];
                 const hasEvents = dayEvents.length > 0;
+                const onlySpecial = hasEvents && dayEvents.every((e) => e.kind === "event");
 
                 return (
                   <button
@@ -242,9 +281,11 @@ export default function RaceCalendar({ events }: RaceCalendarProps) {
                         : dateKey
                     }
                     className={`relative flex min-h-12 flex-col items-center justify-center rounded-lg border text-sm transition sm:min-h-16 ${
-                      hasEvents
-                        ? "cursor-pointer border-lime-400/40 bg-lime-400/10 font-bold text-lime-300 hover:border-lime-400 hover:bg-lime-400/20"
-                        : "border-white/5 bg-white/[0.02] text-neutral-500"
+                      onlySpecial
+                        ? "cursor-pointer border-amber-400/40 bg-amber-400/10 font-bold text-amber-200 hover:border-amber-400 hover:bg-amber-400/20"
+                        : hasEvents
+                          ? "cursor-pointer border-lime-400/40 bg-lime-400/10 font-bold text-lime-300 hover:border-lime-400 hover:bg-lime-400/20"
+                          : "border-white/5 bg-white/[0.02] text-neutral-500"
                     }`}
                   >
                     {day}
@@ -254,7 +295,7 @@ export default function RaceCalendar({ events }: RaceCalendarProps) {
                         {dayEvents.slice(0, 3).map((event) => (
                           <span
                             key={event.id}
-                            className="h-1 w-1 rounded-full bg-lime-400"
+                            className={`h-1 w-1 rounded-full ${event.kind === "event" ? "bg-amber-400" : "bg-lime-400"}`}
                           />
                         ))}
                       </span>
@@ -267,19 +308,20 @@ export default function RaceCalendar({ events }: RaceCalendarProps) {
             <div className="mt-4 flex items-center gap-2 text-xs text-neutral-400">
               <span className="h-2 w-2 rounded-full bg-lime-400" />
               Race scheduled
+              <span className="ml-4 h-2 w-2 rounded-full bg-amber-400" />
+              Banquet / event
             </div>
           </div>
 
           <div>
             <h3 className="mb-4 text-lg font-bold text-white">
-              Races this month
+              This month
             </h3>
 
             {monthEvents.length === 0 ? (
-              <div className="rounded-xl border border-white/10 p-5">
-                <p className="text-sm text-neutral-400">
-                  No races scheduled for this month.
-                </p>
+              <div className="rounded-xl border border-dashed border-white/15 p-6 text-center">
+                <p className="font-bold text-white">Rest up and wrench on the bike.</p>
+                <p className="mt-1 text-sm text-neutral-400">No races this month. Racing will be back soon!</p>
               </div>
             ) : (
               <div className="space-y-3">
@@ -312,15 +354,24 @@ export default function RaceCalendar({ events }: RaceCalendarProps) {
                             {getEventLocation(event)}
                           </p>
 
-                          <EventStatus raceDate={event.race_date} processed={event.processed} className="mt-2" />
-
-                          <Link
-                            href={`/results/${event.id}`}
-                            className="mt-3 inline-block text-sm font-bold text-lime-400 transition hover:text-lime-300"
-                          >
-                 
-                            View Results →
-                          </Link>
+                          {event.kind === "event" ? (
+                            <Link
+                              href={event.href ?? "/"}
+                              className="mt-3 inline-block text-sm font-bold text-amber-300 transition hover:text-amber-200"
+                            >
+                              {event.linkText ?? "Details →"}
+                            </Link>
+                          ) : (
+                            <>
+                              <EventStatus raceDate={event.race_date} processed={event.processed} className="mt-2" />
+                              <Link
+                                href={`/results/${event.id}`}
+                                className="mt-3 block text-sm font-bold text-lime-400 transition hover:text-lime-300"
+                              >
+                                View Results →
+                              </Link>
+                            </>
+                          )}
                         </div>
                       </div>
                     </article>

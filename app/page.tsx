@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Suspense } from "react";
 
+import { SITE_EVENTS } from "@/lib/site-events";
 import { selectPublicRows } from "@/lib/supabase/data";
 import RaceCalendar, {
   type CalendarEvent,
@@ -85,6 +86,23 @@ async function RaceCalendarSection() {
     state: event.state,
     processed: event.processed,
   }));
+
+  // The banquet and other non-race events (lib/site-events.ts), once they have a date.
+  for (const e of SITE_EVENTS) {
+    if (!e.date) continue;
+    events.push({
+      id: e.id,
+      name: e.name,
+      race_date: e.date,
+      location: e.location,
+      city: null,
+      state: null,
+      processed: null,
+      kind: "event",
+      href: e.href,
+      linkText: e.linkText,
+    });
+  }
 
   return <RaceCalendar events={events} />;
 }
