@@ -199,6 +199,13 @@ export default function HomePage() {
               </Link>
 
               <Link
+                href="/join"
+                className="rounded-lg border border-lime-400/60 px-5 py-3 font-bold text-lime-300 transition hover:bg-lime-400 hover:text-black"
+              >
+                Join RMEC
+              </Link>
+
+              <Link
                 href="/worker-points"
                 className="rounded-lg border border-white/20 px-5 py-3 font-bold text-white transition hover:border-lime-400 hover:text-lime-400"
               >

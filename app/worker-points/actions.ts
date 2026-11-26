@@ -1,6 +1,7 @@
 "use server";
 
 import { getSupabaseServerClient } from "@/lib/supabase/server";
+import { env } from "@/lib/env";
 
 export type RequestState = {
   ok: boolean;
@@ -87,10 +88,10 @@ async function notify(r: {
   kind: string;
   matched: string;
 }) {
-  const key = process.env.RESEND_API_KEY;
-  const to = process.env.CREDIT_REQUEST_EMAIL_TO;
+  const key = env("RESEND_API_KEY");
+  const to = env("CREDIT_REQUEST_EMAIL_TO");
   if (!key || !to) return;
-  const from = process.env.CREDIT_REQUEST_EMAIL_FROM || "RMEC Racing <onboarding@resend.dev>";
+  const from = env("CREDIT_REQUEST_EMAIL_FROM") || "RMEC Racing <onboarding@resend.dev>";
   const lines = [
     `${r.name} sent a ${r.kind} request.`,
     "",
