@@ -185,10 +185,19 @@ def main(argv=None):
         print("\nDry run: nothing was written. Add --apply to save.")
         return 0
     try:
+        # Riders getting identical values are saved together, 100 per request.
+        groups: dict = {}
         for rid, _, values in updates:
-            db.update("riders", {"id": f"eq.{rid}"}, values)
-        for rid, _, _ in expirations:
-            db.update("riders", {"id": f"eq.{rid}"}, {"is_member": False})
+            groups.setdefault(tuple(sorted(values.items())), []).append(rid)
+        groups[(("is_member", False),)] = groups.get((("is_member", False),), []) + [rid for rid, _, _ in expirations]
+        total = sum(len(ids) for ids in groups.values())
+        done = 0
+        for values, ids in groups.items():
+            for i in range(0, len(ids), 100):
+                chunk = ids[i:i + 100]
+                db.update("riders", {"id": f"in.({','.join(chunk)})"}, dict(values))
+                done += len(chunk)
+                print(f"  saved {done}/{total}", flush=True)
     except SupabaseError as e:
         print(f"Error while saving: {e}", file=sys.stderr)
         return 1
