@@ -506,6 +506,16 @@ class DuplicateRiderPrevention(unittest.TestCase):
         self.assertEqual((rows[2]["enduro_checks"], rows[2]["enduro_penalty_seconds"]), (16, 79 * 60 + 42))
         self.assertIsNone(rows[0]["enduro_checks"])
 
+    def test_scored_with_no_sections_and_no_time_is_a_no_show(self):
+        raw = [{"id": 1, "userId": 5, "fullName": "Travis Epperson", "className": "A 55+", "classPosition": 9,
+                "overallPosition": 265, "standing": "Scored", "sectionsCompleted": 0, "totalCumulatedTime": ""},
+               {"id": 2, "userId": 6, "fullName": "A B", "className": "A 55+", "classPosition": 2,
+                "standing": "Scored", "sectionsCompleted": 12, "totalCumulatedTime": "01:38:20.735"}]
+        rows = pipeline.result_rows(raw, "ev", {("ll", 5): "r5", ("ll", 6): "r6"}, lambda r: {"id": "a55"})
+        self.assertEqual((rows[0]["dns"], rows[0]["position"], rows[0]["overall_position"], rows[0]["standing"]),
+                         (True, None, None, "DNS (no scores)"))
+        self.assertEqual((rows[1]["dns"], rows[1]["position"]), (False, 2))
+
     def test_merge_plan_follows_aliases(self):
         from importer import merge_riders
         riders = [{"id": "rob", "full_name": "Rob Reed", "livelaps_id": 7},

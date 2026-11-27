@@ -403,6 +403,16 @@ def _total_time(text):
     return t if t and _seconds(t) else None
 
 
+def _no_show(r: dict) -> dict:
+    """LiveLaps sometimes lists a rider as "Scored" with no sections and no time: they didn't
+    ride (often they worked the race). No valid first check means no points (rulebook 7.5 C),
+    so they're stored as DNS with no place."""
+    if (r.get("userId") is not None and normalize(r.get("standing")) == "scored"
+            and _int_or_none(r.get("sectionsCompleted")) == 0 and not _total_time(r.get("totalCumulatedTime"))):
+        return {"standing": "DNS (no scores)", "dns": True, "position": None, "overall_position": None}
+    return {}
+
+
 def result_rows(results, event_id, rider_ids: dict, class_for) -> list[dict]:
     """Build results rows. points / division_points are left out so a re-import
     never wipes points that scoring already set."""
@@ -437,6 +447,7 @@ def result_rows(results, event_id, rider_ids: dict, class_for) -> list[dict]:
             "enduro_penalty_seconds": (r["enduroScore"][1] * 60 + r["enduroScore"][2]) if r.get("enduroScore") else None,
             "standing": r.get("standing") or None,
             **result_status(r),
+            **_no_show(r),
             "livelaps_result_id": _int_or_none(r.get("id")),
             "source_key": r.get("source_key"),
         })

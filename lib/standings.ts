@@ -237,6 +237,7 @@ export const MIN_EVENTS = 4;
 export function eventsRidden(results: StandingResult[]) {
   const seen = new Map<string, Set<string>>();
   for (const r of results) {
+    if (r.dns) continue; // listed but didn't ride
     if (!seen.has(r.rider_id)) seen.set(r.rider_id, new Set());
     seen.get(r.rider_id)!.add(r.event_id);
   }
@@ -257,7 +258,7 @@ export function workerPointsValue(races: Record<string, RaceResult>) {
  * Worker points (rulebook 5), applied before drops:
  * - Each worker credit adds one WP once the rider has ridden MIN_EVENTS races (5.10).
  * - A WP is worth the average of the rider's best 3 results in that standing, rounded.
- * - It takes the place of a race the rider missed, or else their lowest-scoring race (5.6, 5.9).
+ * - It takes the place of a race the rider missed or didn't start, or else their lowest-scoring race (5.6, 5.9).
  * - It applies to one class only (5.7): the class they rode most (then the most points),
  *   and to that class's division standing (5.5).
  */
@@ -298,7 +299,9 @@ export function applyWorkerPoints({
         .filter((x) => x.result?.status !== "WP")
         .sort(
           (a, b) =>
-            Number(Boolean(a.result)) - Number(Boolean(b.result)) ||
+            // A race not ridden (missed, or listed as DNS) first, e.g. the day they worked.
+            Number(Boolean(a.result) && a.result?.status !== "DNS") -
+              Number(Boolean(b.result) && b.result?.status !== "DNS") ||
             (a.result?.points ?? 0) - (b.result?.points ?? 0) ||
             a.index - b.index,
         )[0];
