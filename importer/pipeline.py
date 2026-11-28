@@ -136,8 +136,16 @@ def rider_key(r: dict):
     uid = _int_or_none(r.get("userId"))
     if uid is not None:
         return ("ll", uid)
-    name = r.get("fullName") or f"{r.get('firstName') or ''} {r.get('lastName') or ''}"
-    return ("name", normalize(name))
+    name = normalize(r.get("fullName") or f"{r.get('firstName') or ''} {r.get('lastName') or ''}")
+    aliases = _class_aliases()
+    if aliases and any(n == name for n, _ in aliases):
+        # Same name, different people: keep them apart by class. The class in
+        # rider_aliases.csv can be the results site's class name or the RMEC class it maps to.
+        raw = normalize(r.get("className"))
+        for cls in (raw, _class_target(r.get("className"))):
+            if cls and (name, cls) in aliases:
+                return ("name", name, cls)
+    return ("name", name)
 
 
 def result_key(r: dict):
@@ -278,8 +286,20 @@ RIDER_ALIASES_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "r
 
 
 def load_rider_aliases(path: str | None = None) -> dict:
-    """{normalized name on the results site: normalized name of the existing rider}.
-    For the same person spelled differently, e.g. MotoTally "Dave Bower" = "David Bower"."""
+    """{normalized name on the results site: rider id or normalized name of the existing rider}.
+    For the same person spelled differently, e.g. MotoTally "Dave Bower" = "David Bower".
+    Rows with a `class` are left out here; see load_class_rider_aliases."""
+    return {a: b for (a, cls), b in _read_rider_aliases(path).items() if not cls}
+
+
+def load_class_rider_aliases(path: str | None = None) -> dict:
+    """{(normalized name, normalized class): rider id or name}, for two different people with the
+    same name on a site without rider ids (MotoTally "James Buck" in AA and in Sportsmen).
+    The class is the class name as it appears in the results."""
+    return {k: b for k, b in _read_rider_aliases(path).items() if k[1]}
+
+
+def _read_rider_aliases(path: str | None = None) -> dict:
     path = path or RIDER_ALIASES_FILE
     out = {}
     if os.path.exists(path):
@@ -288,8 +308,28 @@ def load_rider_aliases(path: str | None = None) -> dict:
                 a = normalize(row.get("results_name"))
                 b = (row.get("rider_id") or "").strip() or normalize(row.get("rider_name"))
                 if a and b:
-                    out[a] = b
+                    out[(a, normalize(row.get("class")))] = b
     return out
+
+
+_CLASS_ALIAS_CACHE: dict | None = None
+_CLASS_TARGET = None
+
+
+def _class_target(class_name):
+    """RMEC class (normalized) a results class maps to, from class_map.csv rows that apply everywhere."""
+    global _CLASS_TARGET
+    if _CLASS_TARGET is None:
+        _CLASS_TARGET = class_lookup()
+    t = _CLASS_TARGET(class_name)
+    return None if t in (None, "skip") else t
+
+
+def _class_aliases() -> dict:
+    global _CLASS_ALIAS_CACHE
+    if _CLASS_ALIAS_CACHE is None:
+        _CLASS_ALIAS_CACHE = load_class_rider_aliases()
+    return _CLASS_ALIAS_CACHE
 
 
 def match_named_riders(store, named: dict, log=print) -> dict:
@@ -308,14 +348,19 @@ def match_named_riders(store, named: dict, log=print) -> dict:
             by_last.setdefault(normalize(r["last_name"]), []).append(r)
 
     aliases = load_rider_aliases()
+    class_aliases = _class_aliases()
     by_id = {rid: r for group in by_name.values() for rid, r in group.items()}
     ids, new, clashes = {}, [], []
     for key, row in named.items():
-        target = aliases.get(key[1], key[1])
+        target = class_aliases.get((key[1], key[2])) if len(key) > 2 else aliases.get(key[1], key[1])
         if target in by_id:           # the sheet names a specific rider id
             ids[key] = target
             continue
         found = list(by_name.get(target, {}).values())
+        if not found and target != key[1] and len(key) == 2:
+            # The alias points at a name no rider has any more (renamed); use the results name.
+            log(f"  ! rider_aliases.csv: no rider named '{target}' (for {row['full_name']}); matching by name instead")
+            found = list(by_name.get(key[1], {}).values())
         if len(found) == 1:
             ids[key] = found[0]["id"]
         elif len(found) > 1:
@@ -411,6 +456,29 @@ def _no_show(r: dict) -> dict:
             and _int_or_none(r.get("sectionsCompleted")) == 0 and not _total_time(r.get("totalCumulatedTime"))):
         return {"standing": "DNS (no scores)", "dns": True, "position": None, "overall_position": None}
     return {}
+
+
+def drop_empty_duplicates(raw: list[dict], rider_ids: dict, class_for, log=print) -> list[dict]:
+    """A rider listed twice in one class where one entry is empty (no class place and no
+    section ridden), e.g. MotoTally Black Hills "Kurt Kamrad" and "Kurt Kamrad Kurt Kamrad":
+    keep the real result and leave out the empty one."""
+    def empty(r):
+        return not _int_or_none(r.get("classPosition")) and not (_int_or_none(r.get("sectionsCompleted")) or 0)
+
+    groups: dict = {}
+    for i, r in enumerate(raw):
+        rid, cls = rider_ids.get(rider_key(r)), class_for(r)
+        if rid and cls and cls is not AMBIGUOUS:
+            groups.setdefault((rid, cls["id"]), []).append(i)
+    drop = set()
+    for idxs in groups.values():
+        if len(idxs) > 1:
+            empties = [i for i in idxs if empty(raw[i])]
+            if empties and len(empties) < len(idxs):
+                drop.update(empties)
+                log(f"  Left out {len(empties)} empty duplicate entr{'y' if len(empties) == 1 else 'ies'} for "
+                    f"{raw[idxs[0]].get('fullName')} in {raw[idxs[0]].get('className')} (no place, no sections)")
+    return [r for i, r in enumerate(raw) if i not in drop]
 
 
 def result_rows(results, event_id, rider_ids: dict, class_for) -> list[dict]:
@@ -861,6 +929,7 @@ def import_event(store, event: dict, log=print, results_file: str | None = None,
 
     # 3. Results, matched to riders by id (or name) and class — never by list position.
     base_class_for = build_class_matcher(classes, event, series)
+    raw = drop_empty_duplicates(raw, rider_ids, _with_overrides(base_class_for, event_id, overrides), log)
     rows = result_rows(raw, event_id, rider_ids, _with_overrides(base_class_for, event_id, overrides))
     apply_class_overrides(raw, rows, event_id, base_class_for, overrides, log, already_applied=True)
     check_divisions_single_race(raw, rows, {c['id']: c for c in classes})

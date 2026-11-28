@@ -63,6 +63,8 @@ export type Standing = {
   /** Season tie-breakers (rulebook 7.6), the same in every standing of the rider. */
   overallWins: number;
   classWins: number;
+  /** Sportsman points (rulebook 6), added on top of the counted total. */
+  sportsmanPoints?: number;
   /** Has earned eligibility for year-end awards ("E"). */
   eligible?: boolean;
   rank: number;
@@ -267,6 +269,7 @@ export function applyWorkerPoints({
   byDivision,
   classDivision,
   workerCredits,
+  workerEvents,
   ridden,
   seasonRaceIds,
 }: {
@@ -276,6 +279,12 @@ export function applyWorkerPoints({
   classDivision: Map<string, string | null>;
   /** rider id -> number of worker-point credits this season */
   workerCredits: Map<string, number>;
+  /**
+   * rider id -> the race ids of the event they worked (both days of a two-day event).
+   * Rulebook 5.9: worker points stand in for that event, so they go on one of its days
+   * (a missed day first, else the lower one) even if the rider also raced it.
+   */
+  workerEvents?: Map<string, string[]>;
   ridden: Map<string, number>;
   seasonRaceIds: string[];
 }) {
@@ -292,11 +301,13 @@ export function applyWorkerPoints({
   const award = (s: Standing, count: number): Standing => {
     const races = { ...s.races };
     let points = s.points;
+    const worked = (workerEvents?.get(s.riderId) ?? []).filter((id) => seasonRaceIds.includes(id));
     for (let n = 0; n < count; n++) {
       const value = workerPointsValue(races);
+      const onWorked = n === 0 && worked.length > 0;
       const slot = seasonRaceIds
         .map((id, index) => ({ id, index, result: races[id] }))
-        .filter((x) => x.result?.status !== "WP")
+        .filter((x) => x.result?.status !== "WP" && (!onWorked || worked.includes(x.id)))
         .sort(
           (a, b) =>
             // A race not ridden (missed, or listed as DNS) first, e.g. the day they worked.
@@ -305,7 +316,7 @@ export function applyWorkerPoints({
             (a.result?.points ?? 0) - (b.result?.points ?? 0) ||
             a.index - b.index,
         )[0];
-      if (!slot || value <= (slot.result?.points ?? 0)) break;
+      if (!slot || value <= 0 || (!onWorked && value <= (slot.result?.points ?? 0))) break;
       races[slot.id] = { points: value, place: null, status: "WP", replaced: slot.result };
       points += value - (slot.result?.points ?? 0);
     }
@@ -321,6 +332,69 @@ export function applyWorkerPoints({
     if (division && out.byDivision[division]) {
       out.byDivision[division] = out.byDivision[division].map((s) => (s.riderId === riderId ? award(s, count) : s));
     }
+  }
+  return out;
+}
+
+/**
+ * Sportsman points (rulebook 6), added after drops as their own column:
+ * - Worth the rider's best finish of the year in that standing (6.2): their best race
+ *   points in the class, and their best division points in the division (worker points
+ *   don't count as a finish).
+ * - Added on top of the counted total (6.3), so they never take a race's place and are
+ *   never dropped.
+ * - One set per season (6.5), in the rider's main class (the one they rode most, then the
+ *   most points) and that class's division.
+ */
+export function applySportsmanPoints({
+  byClass,
+  byDivision,
+  classDivision,
+  sportsmanRiders,
+  raceOrder,
+}: {
+  byClass: Record<string, Standing[]>;
+  byDivision: Record<string, Standing[]>;
+  classDivision: Map<string, string | null>;
+  sportsmanRiders: Set<string>;
+  raceOrder: string[];
+}) {
+  if (!sportsmanRiders.size) return { byClass, byDivision };
+  const homeClass = new Map<string, { classId: string; events: number; points: number }>();
+  for (const [classId, rows] of Object.entries(byClass)) {
+    for (const s of rows) {
+      const raw = s.rawPoints ?? s.points;
+      const best = homeClass.get(s.riderId);
+      if (!best || s.events > best.events || (s.events === best.events && raw > best.points)) {
+        homeClass.set(s.riderId, { classId, events: s.events, points: raw });
+      }
+    }
+  }
+
+  const add = (rows: Standing[], riderId: string) =>
+    rankStandings(
+      rows.map((s) => {
+        if (s.riderId !== riderId) return s;
+        const value = Math.max(
+          0,
+          ...Object.values(s.races)
+            .filter((r) => r.status !== "WP")
+            .map((r) => r.points),
+        );
+        return value > 0
+          ? { ...s, sportsmanPoints: value, points: s.points + value, rawPoints: (s.rawPoints ?? s.points) + value }
+          : s;
+      }),
+      raceOrder,
+    );
+
+  const out = { byClass: { ...byClass }, byDivision: { ...byDivision } };
+  for (const riderId of sportsmanRiders) {
+    const home = homeClass.get(riderId);
+    if (!home) continue;
+    out.byClass[home.classId] = add(out.byClass[home.classId], riderId);
+    const division = classDivision.get(home.classId);
+    if (division && out.byDivision[division]) out.byDivision[division] = add(out.byDivision[division], riderId);
   }
   return out;
 }

@@ -185,7 +185,7 @@ export default function StandingsBoard({
                     drops > 0
                       ? ` — each rider's ${drops} lowest results (missed races count as 0) are dropped and shown crossed out`
                       : " from every race"
-                  }. WP = worker points (average of the rider's best 3 results), in place of a missed or lowest race. Ties go to most overall wins, then class wins, then the last head-to-head.`}
+                  }. WP = worker points (average of the rider's best 3 results), in place of a missed or lowest race. SP = sportsman points (the rider's best finish of the year, for stopping to help an injured rider), added to the total. Ties go to most overall wins, then class wins, then the last head-to-head.`}
                   {!allRaces && " Showing only the selected races; totals are for the whole season."}
                 </p>
               </div>
@@ -273,6 +273,7 @@ const stickyRank = "sticky left-0 z-10 bg-[#141816] w-16";
 const stickyRider = "sticky left-16 z-10 bg-[#141816] min-w-[11rem] max-w-[14rem] shadow-[8px_0_12px_-12px_rgba(0,0,0,0.9)]";
 
 function SeasonTable({ standings, races }: { standings: Standing[]; races: SeasonRace[] }) {
+  const showSportsman = standings.some((s) => s.sportsmanPoints);
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-left text-sm">
@@ -289,6 +290,11 @@ function SeasonTable({ standings, races }: { standings: Standing[]; races: Seaso
                 </div>
               </th>
             ))}
+            {showSportsman && (
+              <th className="px-3 py-3 text-center text-emerald-400" title="Sportsman points: best finish of the year, added to the total">
+                SP
+              </th>
+            )}
             <th className="px-4 py-3 text-center">Wins</th>
             <th className="px-4 py-3 text-right text-lime-400">Total</th>
           </tr>
@@ -322,6 +328,17 @@ function SeasonTable({ standings, races }: { standings: Standing[]; races: Seaso
                     </td>
                   );
                 })}
+                {showSportsman && (
+                  <td className="px-3 py-3 text-center group-hover:bg-white/[0.02]">
+                    {s.sportsmanPoints ? (
+                      <span className="font-bold text-emerald-300" title="Sportsman points (best finish of the year)">
+                        +{s.sportsmanPoints}
+                      </span>
+                    ) : (
+                      <span className="text-neutral-700">—</span>
+                    )}
+                  </td>
+                )}
                 <td className="px-4 py-3 text-center font-semibold text-neutral-300 group-hover:bg-white/[0.02]">{s.wins}</td>
                 <td className="px-4 py-3 text-right group-hover:bg-white/[0.02]">
                   <div className="text-lg font-black text-lime-400">{s.points}</div>

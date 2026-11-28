@@ -4,6 +4,7 @@ import { selectPublicRows } from "@/lib/supabase/data";
 import {
   applyDrops,
   applyWorkerPoints,
+  applySportsmanPoints,
   buildStandings,
   eventsRidden,
   markEligibility,
@@ -36,7 +37,7 @@ type EventRow = { id: string; name: string; race_date: string | null };
 
 export type SeasonRace = { id: string; name: string; date: string | null };
 type Member = { id: string; full_name: string; rider_number: string | null };
-type Credit = { rider_id: string; season_id: string; kind: string };
+type Credit = { rider_id: string; season_id: string; kind: string; event_id: string | null };
 
 export type SeasonStandings = {
   season: Season;
@@ -161,7 +162,7 @@ export async function loadSeasonStandings(
 
   // Worker points and eligibility (rider_credits). If the table isn't there yet,
   // the standings still load, just without WP or E.
-  const creditsRes = await selectPublicRows<Credit>("public_rider_credits", "rider_id, season_id, kind", {
+  const creditsRes = await selectPublicRows<Credit>("public_rider_credits", "rider_id, season_id, kind, event_id", {
     equals: { column: "season_id", value: season.id },
   });
   const credits = creditsRes.error ? [] : (creditsRes.data ?? []);
@@ -175,24 +176,44 @@ export async function loadSeasonStandings(
       if (c.kind === "worker_points") workerCredits.set(c.rider_id, 1);
     }
   }
+  // The event each rider worked, as this season's race ids (both days of a two-day event).
+  const eventBase = (name: string) => name.replace(/\s*day\s*\d+\s*$/i, "").trim().toLowerCase();
+  const allEventNames = new Map((eventsRes.data ?? []).map((e) => [e.id, e.name]));
+  const workerEvents = new Map<string, string[]>();
+  for (const c of credits) {
+    if (c.kind !== "worker_points" || !c.event_id || workerEvents.has(c.rider_id)) continue;
+    const name = allEventNames.get(c.event_id);
+    const ids = name ? races.filter((r) => eventBase(r.name) === eventBase(name)).map((r) => r.id) : [];
+    if (ids.length) workerEvents.set(c.rider_id, ids);
+  }
+  const classDivision = new Map<string, string | null>(
+    classes.map((c) => [c.id, c.division_id && annualDivisionIds.has(c.division_id) ? c.division_id : null]),
+  );
   const withWorkerPoints = applyWorkerPoints({
     byClass: built.byClass,
     byDivision: built.byDivision,
-    classDivision: new Map(
-      classes.map((c) => [c.id, c.division_id && annualDivisionIds.has(c.division_id) ? c.division_id : null]),
-    ),
+    classDivision,
     workerCredits,
+    workerEvents,
     ridden,
     seasonRaceIds: raceIds,
   });
 
   const drops = SEASON_DROPS[kind];
-  const finish = (groups: Record<string, Standing[]>) =>
-    Object.fromEntries(
-      Object.entries(groups).map(([id, rows]) => [id, markEligibility(applyDrops(rows, raceIds, drops), credited, ridden)]),
-    );
-  const byClass = finish(withWorkerPoints.byClass);
-  const byDivision = finish(withWorkerPoints.byDivision);
+  const dropped = (groups: Record<string, Standing[]>) =>
+    Object.fromEntries(Object.entries(groups).map(([id, rows]) => [id, applyDrops(rows, raceIds, drops)]));
+  // Sportsman points (rulebook 6): one set per rider per season, added after drops.
+  const withSportsmanPoints = applySportsmanPoints({
+    byClass: dropped(withWorkerPoints.byClass),
+    byDivision: dropped(withWorkerPoints.byDivision),
+    classDivision,
+    sportsmanRiders: new Set(credits.filter((c) => c.kind === "sportsman").map((c) => c.rider_id)),
+    raceOrder: raceIds,
+  });
+  const eligible = (groups: Record<string, Standing[]>) =>
+    Object.fromEntries(Object.entries(groups).map(([id, rows]) => [id, markEligibility(rows, credited, ridden)]));
+  const byClass = eligible(withSportsmanPoints.byClass);
+  const byDivision = eligible(withSportsmanPoints.byDivision);
   const eligibleCount = members.filter((m) => credited.has(m.id) && (ridden.get(m.id) ?? 0) >= 4 && racedIds.has(m.id)).length;
 
   return {

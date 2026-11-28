@@ -359,6 +359,41 @@ class MergedClasses(unittest.TestCase):
         self.assertEqual([x["position"] for x in rows], [2, 3, 1, 4, 5, 6, None])
 
 
+class EmptyDuplicateAfterAlias(unittest.TestCase):
+    def test_empty_second_entry_is_left_out(self):
+        # MotoTally Black Hills: "Kurt Kamrad" (6th, 1 section) and "Kurt Kamrad Kurt Kamrad"
+        # (DNF, 0 sections) are the same rider once the alias is applied.
+        raw = [{"fullName": "Kurt Kamrad", "className": "B Vet 30+", "classPosition": 6, "sectionsCompleted": 1},
+               {"fullName": "Kurt Kamrad Kurt Kamrad", "className": "B Vet 30+", "classPosition": None,
+                "sectionsCompleted": 0, "standing": "DNF"},
+               {"fullName": "Someone Else", "className": "B Vet 30+", "classPosition": None, "sectionsCompleted": 0}]
+        ids = {("name", "kurt kamrad"): "k", ("name", "kurt kamrad kurt kamrad"): "k", ("name", "someone else"): "s"}
+        kept = pipeline.drop_empty_duplicates(raw, ids, lambda r: {"id": "b30"}, log=lambda *_: None)
+        self.assertEqual([r["fullName"] for r in kept], ["Kurt Kamrad", "Someone Else"])
+
+
+class ClassRiderAliases(unittest.TestCase):
+    def test_same_name_split_by_class(self):
+        import tempfile
+        with tempfile.NamedTemporaryFile("w", suffix=".csv", delete=False) as f:
+            f.write("results_name,rider_name,rider_id,class,note\n"
+                    "James Buck,James Buck,id-aa,AA,\nJames Buck,James Buck 2nd,id-sp,Sportsmen,\n"
+                    "Dave Bower,David Bower,id-db,,\n")
+        self.assertEqual(pipeline.load_rider_aliases(f.name), {"dave bower": "id-db"})
+        self.assertEqual(pipeline.load_class_rider_aliases(f.name),
+                         {("james buck", "aa"): "id-aa", ("james buck", "sportsmen"): "id-sp"})
+        old = pipeline._CLASS_ALIAS_CACHE
+        pipeline._CLASS_ALIAS_CACHE = pipeline.load_class_rider_aliases(f.name)
+        try:
+            self.assertEqual(pipeline.rider_key({"fullName": "James Buck", "className": "AA"}), ("name", "james buck", "aa"))
+            self.assertEqual(pipeline.rider_key({"fullName": "James Buck", "className": "B"}), ("name", "james buck"))
+            # matched through class_map.csv too: "Pro AA" is RMEC AA
+            self.assertEqual(pipeline.rider_key({"fullName": "James Buck", "className": "Pro AA"}), ("name", "james buck", "aa"))
+        finally:
+            pipeline._CLASS_ALIAS_CACHE = old
+        os.unlink(f.name)
+
+
 class GroupPositions(unittest.TestCase):
     def setUp(self):
         self.classes = {"a": {"id": "a", "division_id": "div-A"}, "b1": {"id": "b1", "division_id": "div-B"},
